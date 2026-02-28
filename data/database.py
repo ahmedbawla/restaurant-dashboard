@@ -20,20 +20,24 @@ from sqlalchemy import create_engine, text
 # ---------------------------------------------------------------------------
 
 def _get_db_url() -> str:
+    # Try every possible location in order
     try:
         import streamlit as st
-        return st.secrets["database"]["url"]
+        # Flat key: DATABASE_URL = "..."
+        if "DATABASE_URL" in st.secrets:
+            return st.secrets["DATABASE_URL"]
+        # Nested key: [database] / url = "..."
+        if "database" in st.secrets and "url" in st.secrets["database"]:
+            return st.secrets["database"]["url"]
     except Exception:
         pass
+    # Environment variable (GitHub Actions, local dev)
     url = os.environ.get("DATABASE_URL", "")
-    if not url:
-        raise RuntimeError(
-            "No database URL found.\n"
-            "  - Local dev: add DATABASE_URL to .streamlit/secrets.toml\n"
-            "  - GitHub Actions: add DATABASE_URL as a repository secret\n"
-            "  - Streamlit Cloud: add it in App Settings → Secrets"
-        )
-    return url
+    if url:
+        return url
+    raise RuntimeError(
+        "No database URL found. Add DATABASE_URL to Streamlit Cloud secrets."
+    )
 
 
 def get_engine():
