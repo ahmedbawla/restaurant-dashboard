@@ -1,85 +1,79 @@
 """
-Sales page — Toast POS sales breakdown.
+Sales Analysis — Toast POS sales data.
 """
-
-import sys
-from pathlib import Path
-sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import streamlit as st
 import pandas as pd
 
-from auth import require_auth, render_sidebar_logout
-from components.charts import (
-    hourly_heatmap,
-    top_items_bar,
-    avg_check_trend,
-    covers_by_dow,
-)
+from components.charts import hourly_heatmap, top_items_bar, avg_check_trend, covers_by_dow
 from components.kpi_card import format_currency
+from components.theme import page_header
 from data import database as db
 
-st.set_page_config(page_title="Sales — BI Dashboard", layout="wide")
+user       = st.session_state["user"]
+username   = user["username"]
+start_date = st.session_state.get("start_date")
+end_date   = st.session_state.get("end_date")
 
-user = require_auth()
-render_sidebar_logout()
-username = user["username"]
-
-st.title("📈 Sales")
-st.caption("Source: Toast POS")
+page_header(
+    "📈 Sales Analysis",
+    subtitle="Revenue, guest covers, and check-size trends sourced from Toast POS.",
+    eyebrow="Revenue Analytics",
+)
 st.divider()
 
 # ── Data ─────────────────────────────────────────────────────────────────────
-daily_sales = db.get_daily_sales(username, days=90)
-hourly_sales = db.get_hourly_sales(username, days=60)
-menu_items = db.get_menu_items(username)
+daily_sales  = db.get_daily_sales(username,  start_date=start_date, end_date=end_date)
+hourly_sales = db.get_hourly_sales(username, start_date=start_date, end_date=end_date)
+menu_items   = db.get_menu_items(username)
 
 if daily_sales.empty:
-    st.error("No sales data. Run `python data/sync.py` first.")
+    st.warning("No sales data found for the selected period.")
     st.stop()
 
-# ── Date filter ───────────────────────────────────────────────────────────────
-with st.sidebar:
-    st.header("Filters")
-    daily_sales["date_dt"] = pd.to_datetime(daily_sales["date"])
-    min_d = daily_sales["date_dt"].min().date()
-    max_d = daily_sales["date_dt"].max().date()
-    date_range = st.date_input("Date Range", value=(min_d, max_d), min_value=min_d, max_value=max_d)
+# ── KPI row ───────────────────────────────────────────────────────────────────
+total_rev    = daily_sales["revenue"].sum()
+total_covers = daily_sales["covers"].sum()
+avg_check    = daily_sales["avg_check"].mean()
+best_idx     = daily_sales["revenue"].idxmax()
+best_rev     = daily_sales.loc[best_idx, "revenue"]
+best_date    = daily_sales.loc[best_idx, "date"]
 
-start_d, end_d = (date_range[0], date_range[1]) if len(date_range) == 2 else (min_d, max_d)
-filtered = daily_sales[
-    (daily_sales["date_dt"].dt.date >= start_d)
-    & (daily_sales["date_dt"].dt.date <= end_d)
-]
+# Period-over-period (first half vs second half of selected window)
+mid = len(daily_sales) // 2
+rev_recent = daily_sales.iloc[mid:]["revenue"].sum()
+rev_prior  = daily_sales.iloc[:mid]["revenue"].sum()
+rev_delta  = (f"{(rev_recent/rev_prior - 1)*100:+.1f}% vs. prior period"
+              if rev_prior else None)
 
-# ── KPIs ─────────────────────────────────────────────────────────────────────
-total_rev = filtered["revenue"].sum()
-total_covers = filtered["covers"].sum()
-avg_check = filtered["avg_check"].mean()
-best_day_rev = filtered["revenue"].max()
-best_day_date = filtered.loc[filtered["revenue"].idxmax(), "date"]
+chk_recent = daily_sales.iloc[mid:]["avg_check"].mean()
+chk_prior  = daily_sales.iloc[:mid]["avg_check"].mean()
+chk_delta  = (f"{(chk_recent/chk_prior - 1)*100:+.1f}% vs. prior period"
+              if chk_prior else None)
 
 k1, k2, k3, k4 = st.columns(4)
 with k1:
-    st.metric("Total Revenue", format_currency(total_rev))
+    st.metric("Total Revenue (Period)", format_currency(total_rev), delta=rev_delta)
 with k2:
-    st.metric("Total Covers", f"{total_covers:,}")
+    st.metric("Total Guest Covers", f"{int(total_covers):,}")
 with k3:
-    st.metric("Avg Check Size", format_currency(avg_check))
+    st.metric("Avg. Check Size", format_currency(avg_check), delta=chk_delta)
 with k4:
-    st.metric("Best Sales Day", f"{best_day_date} · {format_currency(best_day_rev)}")
+    st.metric("Best Single-Day Revenue", format_currency(best_rev),
+              help=f"Recorded on {best_date}.")
 
 st.divider()
 
-# ── Heatmap ───────────────────────────────────────────────────────────────────
+# ── Hourly heatmap ────────────────────────────────────────────────────────────
 if not hourly_sales.empty:
     st.plotly_chart(hourly_heatmap(hourly_sales), use_container_width=True)
 else:
-    st.info("No hourly data available.")
+    st.info("Hourly sales data is not available for the selected period.")
 
 st.divider()
 
-# ── Top items ─────────────────────────────────────────────────────────────────
+# ── Top-performing menu items ─────────────────────────────────────────────────
+st.subheader("Top-Performing Menu Items")
 col1, col2 = st.columns(2)
 with col1:
     if not menu_items.empty:
@@ -89,19 +83,24 @@ with col2:
         st.plotly_chart(top_items_bar(menu_items, metric="quantity_sold"), use_container_width=True)
 
 # ── Trend charts ──────────────────────────────────────────────────────────────
+st.subheader("Sales Trends")
 col3, col4 = st.columns(2)
 with col3:
-    st.plotly_chart(avg_check_trend(filtered), use_container_width=True)
+    st.plotly_chart(avg_check_trend(daily_sales), use_container_width=True)
 with col4:
-    st.plotly_chart(covers_by_dow(filtered), use_container_width=True)
+    st.plotly_chart(covers_by_dow(daily_sales), use_container_width=True)
 
 # ── Daily sales table ─────────────────────────────────────────────────────────
 st.divider()
 st.subheader("Daily Sales Detail")
-table = filtered[["date", "covers", "revenue", "avg_check", "food_cost", "food_cost_pct"]].copy()
-table["revenue"] = table["revenue"].apply(lambda x: f"${x:,.0f}")
-table["avg_check"] = table["avg_check"].apply(lambda x: f"${x:.2f}")
-table["food_cost"] = table["food_cost"].apply(lambda x: f"${x:,.0f}")
+table = daily_sales[["date","covers","revenue","avg_check","food_cost","food_cost_pct"]].copy()
+table["revenue"]       = table["revenue"].apply(lambda x: f"${x:,.0f}")
+table["avg_check"]     = table["avg_check"].apply(lambda x: f"${x:.2f}")
+table["food_cost"]     = table["food_cost"].apply(lambda x: f"${x:,.0f}")
 table["food_cost_pct"] = table["food_cost_pct"].apply(lambda x: f"{x:.1f}%")
 table = table.sort_values("date", ascending=False)
-st.dataframe(table, use_container_width=True, height=400)
+table.columns = ["Date","Covers","Revenue","Avg. Check","Food Cost","Food Cost %"]
+st.dataframe(table, use_container_width=True, height=420, hide_index=True)
+
+st.divider()
+st.caption("🔒 Confidential  ·  For authorised recipients only")

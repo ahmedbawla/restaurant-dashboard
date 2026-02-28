@@ -82,6 +82,7 @@ def init_db() -> None:
             CREATE TABLE IF NOT EXISTS users (
                 username              TEXT PRIMARY KEY,
                 password_hash         TEXT NOT NULL,
+                email                 TEXT,
                 restaurant_name       TEXT NOT NULL DEFAULT '',
                 use_simulated_data    BOOLEAN NOT NULL DEFAULT TRUE,
                 toast_api_key         TEXT,
@@ -221,6 +222,19 @@ def init_db() -> None:
             "CREATE INDEX IF NOT EXISTS idx_expenses_username ON expenses(username)"
         ))
 
+        # --- idempotent migration: add email column to users if missing ---
+        conn.execute(text("""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name='users' AND column_name='email'
+                ) THEN
+                    ALTER TABLE users ADD COLUMN email TEXT;
+                END IF;
+            END $$;
+        """))
+
 
 # ---------------------------------------------------------------------------
 # User auth
@@ -239,6 +253,7 @@ def create_user(
     plain_password: str,
     restaurant_name: str,
     use_simulated_data: bool = True,
+    email: str | None = None,
     **api_keys,
 ) -> None:
     """Insert a new user. Raises ValueError if username is already taken."""
@@ -248,12 +263,12 @@ def create_user(
         with engine.begin() as conn:
             conn.execute(text("""
                 INSERT INTO users (
-                    username, password_hash, restaurant_name, use_simulated_data,
+                    username, password_hash, email, restaurant_name, use_simulated_data,
                     toast_api_key, toast_guid,
                     paychex_client_id, paychex_client_secret, paychex_company_id,
                     qb_client_id, qb_client_secret, qb_realm_id, qb_refresh_token
                 ) VALUES (
-                    :username, :password_hash, :restaurant_name, :use_simulated_data,
+                    :username, :password_hash, :email, :restaurant_name, :use_simulated_data,
                     :toast_api_key, :toast_guid,
                     :paychex_client_id, :paychex_client_secret, :paychex_company_id,
                     :qb_client_id, :qb_client_secret, :qb_realm_id, :qb_refresh_token
@@ -261,6 +276,7 @@ def create_user(
             """), {
                 "username": username,
                 "password_hash": pw_hash,
+                "email": email,
                 "restaurant_name": restaurant_name,
                 "use_simulated_data": use_simulated_data,
                 "toast_api_key": api_keys.get("toast_api_key"),
@@ -293,6 +309,21 @@ def authenticate_user(username: str, plain_password: str) -> dict | None:
     if user and verify_password(plain_password, user["password_hash"]):
         return user
     return None
+
+
+def update_user(username: str, **fields) -> None:
+    """Update allowed user fields in-place."""
+    allowed = {"email", "restaurant_name", "password_hash"}
+    updates = {k: v for k, v in fields.items() if k in allowed}
+    if not updates:
+        return
+    set_clause = ", ".join(f"{k} = :{k}" for k in updates)
+    engine = get_engine()
+    with engine.begin() as conn:
+        conn.execute(
+            text(f"UPDATE users SET {set_clause} WHERE username = :username"),
+            {**updates, "username": username},
+        )
 
 
 def user_has_data(username: str) -> bool:
@@ -330,25 +361,55 @@ def _query(sql: str, params: dict | None = None) -> pd.DataFrame:
         return pd.read_sql_query(text(sql), conn, params=params or {})
 
 
+def _date_clauses(start_date: str | None, end_date: str | None, col: str = "date") -> tuple[str, dict]:
+    """Return (extra WHERE clauses string, extra params dict) for date filtering."""
+    clauses, params = [], {}
+    if start_date:
+        clauses.append(f"{col} >= :start_date")
+        params["start_date"] = start_date
+    if end_date:
+        clauses.append(f"{col} <= :end_date")
+        params["end_date"] = end_date
+    return (" AND " + " AND ".join(clauses)) if clauses else "", params
+
+
+@_streamlit_cache(ttl=600)
+def get_date_range(username: str) -> tuple[str, str]:
+    """Return (min_date, max_date) ISO strings for the user's available data."""
+    result = _query(
+        "SELECT MIN(date) as min_d, MAX(date) as max_d FROM daily_sales WHERE username = :u",
+        {"u": username},
+    )
+    today = date.today().isoformat()
+    fallback_start = (date.today() - timedelta(days=89)).isoformat()
+    if not result.empty and result.iloc[0]["min_d"]:
+        return str(result.iloc[0]["min_d"]), str(result.iloc[0]["max_d"])
+    return fallback_start, today
+
+
 @_streamlit_cache(ttl=300)
-def get_daily_sales(username: str, days: int = 90) -> pd.DataFrame:
-    cutoff = (date.today() - timedelta(days=days)).isoformat()
+def get_daily_sales(
+    username: str,
+    start_date: str | None = None,
+    end_date: str | None = None,
+) -> pd.DataFrame:
+    extra, params = _date_clauses(start_date, end_date)
     return _query(
-        "SELECT * FROM daily_sales WHERE username = :u AND date >= :cutoff ORDER BY date",
-        {"u": username, "cutoff": cutoff},
+        f"SELECT * FROM daily_sales WHERE username = :u{extra} ORDER BY date",
+        {"u": username, **params},
     )
 
 
 @_streamlit_cache(ttl=300)
-def get_hourly_sales(username: str, days: int = 30) -> pd.DataFrame:
-    cutoff = (date.today() - timedelta(days=days)).isoformat()
+def get_hourly_sales(
+    username: str,
+    start_date: str | None = None,
+    end_date: str | None = None,
+) -> pd.DataFrame:
+    extra, params = _date_clauses(start_date, end_date)
     return _query(
-        """
-        SELECT * FROM hourly_sales
-        WHERE username = :u AND date >= :cutoff
-        ORDER BY date, hour
-        """,
-        {"u": username, "cutoff": cutoff},
+        f"SELECT * FROM hourly_sales WHERE username = :u{extra} ORDER BY date, hour",
+        {"u": username, **params},
     )
 
 
@@ -361,68 +422,90 @@ def get_menu_items(username: str) -> pd.DataFrame:
 
 
 @_streamlit_cache(ttl=300)
-def get_daily_labor(username: str, days: int = 90) -> pd.DataFrame:
-    cutoff = (date.today() - timedelta(days=days)).isoformat()
+def get_daily_labor(
+    username: str,
+    start_date: str | None = None,
+    end_date: str | None = None,
+) -> pd.DataFrame:
+    extra, params = _date_clauses(start_date, end_date)
     return _query(
-        "SELECT * FROM daily_labor WHERE username = :u AND date >= :cutoff ORDER BY date",
-        {"u": username, "cutoff": cutoff},
+        f"SELECT * FROM daily_labor WHERE username = :u{extra} ORDER BY date",
+        {"u": username, **params},
     )
 
 
 @_streamlit_cache(ttl=300)
-def get_weekly_payroll(username: str, weeks: int = 12) -> pd.DataFrame:
-    cutoff = (date.today() - timedelta(days=weeks * 7)).isoformat()
+def get_weekly_payroll(
+    username: str,
+    start_date: str | None = None,
+    end_date: str | None = None,
+) -> pd.DataFrame:
+    extra, params = _date_clauses(start_date, end_date, col="week_start")
     return _query(
-        "SELECT * FROM weekly_payroll WHERE username = :u AND week_start >= :cutoff ORDER BY week_start, dept",
-        {"u": username, "cutoff": cutoff},
+        f"SELECT * FROM weekly_payroll WHERE username = :u{extra} ORDER BY week_start, dept",
+        {"u": username, **params},
     )
 
 
 @_streamlit_cache(ttl=300)
-def get_expenses(username: str, days: int = 90) -> pd.DataFrame:
-    cutoff = (date.today() - timedelta(days=days)).isoformat()
+def get_expenses(
+    username: str,
+    start_date: str | None = None,
+    end_date: str | None = None,
+) -> pd.DataFrame:
+    extra, params = _date_clauses(start_date, end_date)
     return _query(
-        "SELECT * FROM expenses WHERE username = :u AND date >= :cutoff ORDER BY date DESC",
-        {"u": username, "cutoff": cutoff},
+        f"SELECT * FROM expenses WHERE username = :u{extra} ORDER BY date DESC",
+        {"u": username, **params},
     )
 
 
 @_streamlit_cache(ttl=300)
-def get_cash_flow(username: str, days: int = 90) -> pd.DataFrame:
-    cutoff = (date.today() - timedelta(days=days)).isoformat()
+def get_cash_flow(
+    username: str,
+    start_date: str | None = None,
+    end_date: str | None = None,
+) -> pd.DataFrame:
+    extra, params = _date_clauses(start_date, end_date)
     return _query(
-        "SELECT * FROM cash_flow WHERE username = :u AND date >= :cutoff ORDER BY date",
-        {"u": username, "cutoff": cutoff},
+        f"SELECT * FROM cash_flow WHERE username = :u{extra} ORDER BY date",
+        {"u": username, **params},
     )
 
 
 @_streamlit_cache(ttl=300)
-def get_kpi_today(username: str) -> dict:
+def get_kpi_today(username: str, as_of_date: str | None = None) -> dict:
+    """KPIs for the most recent day on or before as_of_date (defaults to latest)."""
+    extra = "AND date <= :as_of" if as_of_date else ""
+    params: dict = {"u": username}
+    if as_of_date:
+        params["as_of"] = as_of_date
     sales = _query(
-        "SELECT * FROM daily_sales WHERE username = :u ORDER BY date DESC LIMIT 1",
-        {"u": username},
+        f"SELECT * FROM daily_sales WHERE username = :u {extra} ORDER BY date DESC LIMIT 1",
+        params,
     )
     if sales.empty:
         return {}
     row = sales.iloc[0]
     labor = _query(
-        "SELECT SUM(labor_cost) as labor_cost, SUM(hours) as hours FROM daily_labor WHERE username = :u AND date = :d",
+        "SELECT SUM(labor_cost) as labor_cost, SUM(hours) as hours "
+        "FROM daily_labor WHERE username = :u AND date = :d",
         {"u": username, "d": row["date"]},
     )
     labor_cost = float(labor["labor_cost"].iloc[0] or 0)
-    revenue = float(row["revenue"])
-    food_cost = float(row["food_cost"])
-    labor_pct = (labor_cost / revenue * 100) if revenue else 0
-    food_pct = float(row["food_cost_pct"])
+    revenue    = float(row["revenue"])
+    food_cost  = float(row["food_cost"])
+    labor_pct  = (labor_cost / revenue * 100) if revenue else 0
+    food_pct   = float(row["food_cost_pct"])
     return {
-        "date": row["date"],
-        "revenue": revenue,
-        "covers": int(row["covers"]),
-        "avg_check": float(row["avg_check"]),
-        "food_cost": food_cost,
-        "food_cost_pct": food_pct,
-        "labor_cost": labor_cost,
+        "date":           row["date"],
+        "revenue":        revenue,
+        "covers":         int(row["covers"]),
+        "avg_check":      float(row["avg_check"]),
+        "food_cost":      food_cost,
+        "food_cost_pct":  food_pct,
+        "labor_cost":     labor_cost,
         "labor_cost_pct": round(labor_pct, 2),
         "prime_cost_pct": round(food_pct + labor_pct, 2),
-        "net_profit": round(revenue - food_cost - labor_cost, 2),
+        "net_profit":     round(revenue - food_cost - labor_cost, 2),
     }

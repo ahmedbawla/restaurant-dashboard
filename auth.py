@@ -23,6 +23,7 @@ def seed_test_user() -> None:
         db.create_user(
             username="test",
             plain_password="test",
+            email="ahmed.bawla@gmail.com",
             restaurant_name="The Brass Fork (Demo)",
             use_simulated_data=True,
         )
@@ -79,6 +80,7 @@ def _show_auth_ui() -> None:
             new_password = st.text_input("Password", type="password")
             confirm_password = st.text_input("Confirm Password", type="password")
             restaurant_name = st.text_input("Restaurant Name")
+            email = st.text_input("Email Address", help="Used to send PDF reports")
 
             with st.expander("Toast POS API Keys (optional)"):
                 toast_api_key = st.text_input("Toast API Key")
@@ -118,6 +120,7 @@ def _show_auth_ui() -> None:
                     db.create_user(
                         username=new_username,
                         plain_password=new_password,
+                        email=email or None,
                         restaurant_name=restaurant_name,
                         use_simulated_data=use_sim,
                         toast_api_key=toast_api_key or None,
