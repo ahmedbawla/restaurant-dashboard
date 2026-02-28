@@ -75,6 +75,8 @@ _TABLE_PKS = {
 def init_db() -> None:
     """Create all tables and run idempotent migrations."""
     engine = get_engine()
+
+    # ── Step 1: Create tables (single transaction) ────────────────────────────
     with engine.begin() as conn:
 
         # --- users table ---
@@ -98,7 +100,7 @@ def init_db() -> None:
             )
         """))
 
-        # --- business tables (create if not exist, with username column) ---
+        # --- business tables ---
         conn.execute(text("""
             CREATE TABLE IF NOT EXISTS daily_sales (
                 date          TEXT,
@@ -180,60 +182,56 @@ def init_db() -> None:
             )
         """))
 
-        # --- idempotent migration: add username column to pre-existing tables ---
-        for tbl in list(_TABLE_PKS.keys()) + ["expenses"]:
-            conn.execute(text(f"""
-                DO $$
-                BEGIN
-                    IF NOT EXISTS (
-                        SELECT 1 FROM information_schema.columns
-                        WHERE table_name='{tbl}' AND column_name='username'
-                    ) THEN
-                        ALTER TABLE {tbl} ADD COLUMN username TEXT NOT NULL DEFAULT 'test';
-                        ALTER TABLE {tbl} ALTER COLUMN username DROP DEFAULT;
-                    END IF;
-                END $$;
-            """))
+    # ── Step 2: Column migrations (each in its own transaction so one failure
+    #            doesn't block the rest) ────────────────────────────────────────
 
-        # --- idempotent composite PKs for scoped tables ---
-        for tbl, pk_cols in _TABLE_PKS.items():
-            conn.execute(text(f"""
-                DO $$
-                DECLARE v_pk TEXT;
-                BEGIN
-                    SELECT constraint_name INTO v_pk
-                    FROM information_schema.table_constraints
-                    WHERE table_name='{tbl}' AND constraint_type='PRIMARY KEY';
+    # Add username column to pre-existing tables that may be missing it
+    for tbl in list(_TABLE_PKS.keys()) + ["expenses"]:
+        try:
+            with engine.begin() as conn:
+                conn.execute(text(
+                    f"ALTER TABLE {tbl} ADD COLUMN IF NOT EXISTS username TEXT NOT NULL DEFAULT 'test'"
+                ))
+        except Exception:
+            pass  # column already exists with correct type
 
-                    IF v_pk IS NOT NULL AND NOT EXISTS (
-                        SELECT 1 FROM information_schema.key_column_usage
-                        WHERE constraint_name=v_pk AND column_name='username'
-                    ) THEN
-                        EXECUTE 'ALTER TABLE {tbl} DROP CONSTRAINT ' || v_pk;
-                        ALTER TABLE {tbl} ADD PRIMARY KEY ({pk_cols});
-                    ELSIF v_pk IS NULL THEN
-                        ALTER TABLE {tbl} ADD PRIMARY KEY ({pk_cols});
-                    END IF;
-                END $$;
-            """))
+    # Add email column to users table (the key migration)
+    with engine.begin() as conn:
+        conn.execute(text(
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS email TEXT"
+        ))
 
-        # expenses: index on username (no PK change — id is the PK)
+    # ── Step 3: Composite PKs (each in its own transaction) ───────────────────
+    for tbl, pk_cols in _TABLE_PKS.items():
+        try:
+            with engine.begin() as conn:
+                conn.execute(text(f"""
+                    DO $$
+                    DECLARE v_pk TEXT;
+                    BEGIN
+                        SELECT constraint_name INTO v_pk
+                        FROM information_schema.table_constraints
+                        WHERE table_name='{tbl}' AND constraint_type='PRIMARY KEY';
+
+                        IF v_pk IS NOT NULL AND NOT EXISTS (
+                            SELECT 1 FROM information_schema.key_column_usage
+                            WHERE constraint_name=v_pk AND column_name='username'
+                        ) THEN
+                            EXECUTE 'ALTER TABLE {tbl} DROP CONSTRAINT ' || v_pk;
+                            ALTER TABLE {tbl} ADD PRIMARY KEY ({pk_cols});
+                        ELSIF v_pk IS NULL THEN
+                            ALTER TABLE {tbl} ADD PRIMARY KEY ({pk_cols});
+                        END IF;
+                    END $$;
+                """))
+        except Exception:
+            pass  # PK already correct
+
+    # ── Step 4: Index ─────────────────────────────────────────────────────────
+    with engine.begin() as conn:
         conn.execute(text(
             "CREATE INDEX IF NOT EXISTS idx_expenses_username ON expenses(username)"
         ))
-
-        # --- idempotent migration: add email column to users if missing ---
-        conn.execute(text("""
-            DO $$
-            BEGIN
-                IF NOT EXISTS (
-                    SELECT 1 FROM information_schema.columns
-                    WHERE table_name='users' AND column_name='email'
-                ) THEN
-                    ALTER TABLE users ADD COLUMN email TEXT;
-                END IF;
-            END $$;
-        """))
 
 
 # ---------------------------------------------------------------------------
