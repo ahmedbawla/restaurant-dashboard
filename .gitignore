@@ -1,0 +1,19 @@
+# Secrets — never commit
+.streamlit/secrets.toml
+.env
+
+# Local SQLite (no longer used in production)
+data/restaurant.db
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+
+# PyInstaller build artifacts
+dist/
+build_tmp/
+*.spec

@@ -1,0 +1,30 @@
+{
+  "restaurant_name": "The Brass Fork",
+  "use_simulated_data": true,
+  "thresholds": {
+    "food_cost_pct_target": 30.0,
+    "food_cost_pct_warning": 33.0,
+    "labor_cost_pct_target": 30.0,
+    "labor_cost_pct_warning": 33.0,
+    "prime_cost_pct_target": 60.0,
+    "prime_cost_pct_warning": 65.0,
+    "overtime_hours_weekly": 40
+  },
+  "connectors": {
+    "toast": {
+      "api_key": "",
+      "restaurant_guid": ""
+    },
+    "paychex": {
+      "client_id": "",
+      "client_secret": "",
+      "company_id": ""
+    },
+    "quickbooks": {
+      "client_id": "",
+      "client_secret": "",
+      "realm_id": "",
+      "refresh_token": ""
+    }
+  }
+}
