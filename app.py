@@ -25,6 +25,9 @@ st.set_page_config(
 )
 apply_professional_theme()
 
+# ── Run DB migrations on every startup (idempotent) ──────────────────────────
+db.init_db()
+
 # ── Seed demo account once per session ───────────────────────────────────────
 if "seeded" not in st.session_state:
     seed_test_user()

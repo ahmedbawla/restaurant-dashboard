@@ -18,7 +18,6 @@ from data.sync import sync_all
 
 def seed_test_user() -> None:
     """Ensure the 'test' demo account exists and has data seeded."""
-    db.init_db()
     if not db.get_user("test"):
         db.create_user(
             username="test",
