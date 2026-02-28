@@ -1,26 +1,15 @@
 """
 Connector factory.
-Reads config.json and returns simulated or real connector instances.
+Returns simulated or real connector instances based on the user's settings.
 """
 
-import json
-from pathlib import Path
 
-_CONFIG_PATH = Path(__file__).parent.parent / "config.json"
-
-
-def _load_config() -> dict:
-    with open(_CONFIG_PATH, "r") as f:
-        return json.load(f)
-
-
-def get_connector(source: str):
+def get_connector(source: str, user: dict):
     """
     Returns the appropriate connector for `source` (toast / paychex / quickbooks).
-    Controlled by config.json `use_simulated_data` flag.
+    Controlled by user["use_simulated_data"].
     """
-    config = _load_config()
-    use_sim = config.get("use_simulated_data", True)
+    use_sim = user.get("use_simulated_data", True)
 
     if source == "toast":
         if use_sim:
@@ -38,7 +27,10 @@ def get_connector(source: str):
             }
         else:
             from data.connectors.toast_connector import ToastConnector
-            return ToastConnector(config["connectors"]["toast"])
+            return ToastConnector({
+                "api_key": user.get("toast_api_key", ""),
+                "restaurant_guid": user.get("toast_guid", ""),
+            })
 
     elif source == "paychex":
         if use_sim:
@@ -54,7 +46,11 @@ def get_connector(source: str):
             }
         else:
             from data.connectors.paychex_connector import PaychexConnector
-            return PaychexConnector(config["connectors"]["paychex"])
+            return PaychexConnector({
+                "client_id": user.get("paychex_client_id", ""),
+                "client_secret": user.get("paychex_client_secret", ""),
+                "company_id": user.get("paychex_company_id", ""),
+            })
 
     elif source == "quickbooks":
         if use_sim:
@@ -65,7 +61,12 @@ def get_connector(source: str):
             }
         else:
             from data.connectors.quickbooks_connector import QuickBooksConnector
-            return QuickBooksConnector(config["connectors"]["quickbooks"])
+            return QuickBooksConnector({
+                "client_id": user.get("qb_client_id", ""),
+                "client_secret": user.get("qb_client_secret", ""),
+                "realm_id": user.get("qb_realm_id", ""),
+                "refresh_token": user.get("qb_refresh_token", ""),
+            })
 
     else:
         raise ValueError(f"Unknown source: {source}")

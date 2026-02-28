@@ -6,10 +6,10 @@ import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-import json
 import streamlit as st
 import pandas as pd
 
+from auth import require_auth, render_sidebar_logout
 from components.charts import (
     hourly_heatmap,
     top_items_bar,
@@ -19,18 +19,20 @@ from components.charts import (
 from components.kpi_card import format_currency
 from data import database as db
 
-with open(Path(__file__).parent.parent / "config.json") as f:
-    CONFIG = json.load(f)
-
 st.set_page_config(page_title="Sales — BI Dashboard", layout="wide")
+
+user = require_auth()
+render_sidebar_logout()
+username = user["username"]
+
 st.title("📈 Sales")
 st.caption("Source: Toast POS")
 st.divider()
 
 # ── Data ─────────────────────────────────────────────────────────────────────
-daily_sales = db.get_daily_sales(days=90)
-hourly_sales = db.get_hourly_sales(days=60)
-menu_items = db.get_menu_items()
+daily_sales = db.get_daily_sales(username, days=90)
+hourly_sales = db.get_hourly_sales(username, days=60)
+menu_items = db.get_menu_items(username)
 
 if daily_sales.empty:
     st.error("No sales data. Run `python data/sync.py` first.")

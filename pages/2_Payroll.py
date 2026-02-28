@@ -8,8 +8,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import json
 import streamlit as st
-import pandas as pd
 
+from auth import require_auth, render_sidebar_logout
 from components.charts import labor_cost_gauge, labor_trend, hours_by_dept
 from components.kpi_card import format_currency, format_pct
 from data import database as db
@@ -21,14 +21,19 @@ THRESHOLDS = CONFIG.get("thresholds", {})
 OT_THRESHOLD = THRESHOLDS.get("overtime_hours_weekly", 40)
 
 st.set_page_config(page_title="Payroll — BI Dashboard", layout="wide")
+
+user = require_auth()
+render_sidebar_logout()
+username = user["username"]
+
 st.title("👥 Payroll & Labor")
 st.caption("Source: Paychex")
 st.divider()
 
 # ── Data ─────────────────────────────────────────────────────────────────────
-daily_labor = db.get_daily_labor(days=90)
-weekly_payroll = db.get_weekly_payroll(weeks=13)
-daily_sales = db.get_daily_sales(days=90)
+daily_labor = db.get_daily_labor(username, days=90)
+weekly_payroll = db.get_weekly_payroll(username, weeks=13)
+daily_sales = db.get_daily_sales(username, days=90)
 
 if daily_labor.empty or weekly_payroll.empty:
     st.error("No labor data. Run `python data/sync.py` first.")
@@ -43,7 +48,6 @@ with st.sidebar:
 week_data = weekly_payroll[weekly_payroll["week_start"] == selected_week]
 
 # ── KPIs ─────────────────────────────────────────────────────────────────────
-# Labor cost % for most recent day
 recent_labor = daily_labor.sort_values("date").tail(4)
 recent_date = recent_labor["date"].iloc[-1]
 recent_day_labor = daily_labor[daily_labor["date"] == recent_date]["labor_cost"].sum()

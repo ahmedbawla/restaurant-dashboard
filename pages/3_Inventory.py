@@ -10,6 +10,7 @@ import json
 import streamlit as st
 import pandas as pd
 
+from auth import require_auth, render_sidebar_logout
 from components.charts import food_cost_trend, menu_profitability_scatter, top_items_bar
 from components.kpi_card import format_currency, format_pct, threshold_badge
 from data import database as db
@@ -22,13 +23,18 @@ FOOD_TARGET = THRESHOLDS.get("food_cost_pct_target", 30.0)
 FOOD_WARNING = THRESHOLDS.get("food_cost_pct_warning", 33.0)
 
 st.set_page_config(page_title="Inventory — BI Dashboard", layout="wide")
+
+user = require_auth()
+render_sidebar_logout()
+username = user["username"]
+
 st.title("🥩 Inventory & Food Cost")
 st.caption("Source: Toast POS")
 st.divider()
 
 # ── Data ─────────────────────────────────────────────────────────────────────
-daily_sales = db.get_daily_sales(days=90)
-menu_items = db.get_menu_items()
+daily_sales = db.get_daily_sales(username, days=90)
+menu_items = db.get_menu_items(username)
 
 if daily_sales.empty or menu_items.empty:
     st.error("No data. Run `python data/sync.py` first.")
@@ -40,7 +46,6 @@ total_food_cost = daily_sales["food_cost"].sum()
 total_revenue = daily_sales["revenue"].sum()
 actual_food_pct = total_food_cost / total_revenue * 100
 
-# Theoretical food cost: menu cost * qty / revenue
 theoretical_cost = menu_items["total_cost"].sum()
 theoretical_revenue = menu_items["total_revenue"].sum()
 theoretical_pct = theoretical_cost / theoretical_revenue * 100 if theoretical_revenue > 0 else 0
@@ -68,7 +73,6 @@ st.plotly_chart(food_cost_trend(daily_sales), use_container_width=True)
 
 col1, col2 = st.columns(2)
 with col1:
-    # Top ingredients by cost (approximated from menu item costs)
     top_cost = menu_items.nlargest(10, "total_cost")[["name", "total_cost"]].sort_values("total_cost")
     import plotly.express as px
     fig_cost = px.bar(
@@ -89,7 +93,6 @@ with col1:
     st.plotly_chart(fig_cost, use_container_width=True)
 
 with col2:
-    # Best margin items
     best_margin = menu_items.nlargest(10, "margin_pct")[["name", "margin_pct"]].sort_values("margin_pct")
     fig_margin = px.bar(
         best_margin,

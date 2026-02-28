@@ -12,19 +12,19 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 import streamlit as st
 
+from auth import require_auth, render_sidebar_logout, seed_test_user
 from components.kpi_card import kpi_card, format_currency, format_pct, threshold_badge
 from components.charts import revenue_trend
 from data import database as db
 
-# ── Config ──────────────────────────────────────────────────────────────────
+# ── Config (thresholds only — restaurant name comes from user) ───────────────
 with open(Path(__file__).parent / "config.json") as f:
     CONFIG = json.load(f)
 
-RESTAURANT_NAME = CONFIG.get("restaurant_name", "Restaurant")
 THRESHOLDS = CONFIG.get("thresholds", {})
 
 st.set_page_config(
-    page_title=f"{RESTAURANT_NAME} — BI Dashboard",
+    page_title="Restaurant BI Dashboard",
     page_icon="🍽️",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -42,15 +42,27 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+# ── Auth gate ────────────────────────────────────────────────────────────────
+seed_test_user()
+user = require_auth()
+render_sidebar_logout()
+
+RESTAURANT_NAME = user["restaurant_name"]
+username = user["username"]
+
 # ── Header ───────────────────────────────────────────────────────────────────
 st.title(f"🍽️ {RESTAURANT_NAME} — Business Intelligence Dashboard")
-st.caption("Data refreshed daily · Simulated data mode" if CONFIG.get("use_simulated_data") else "Data refreshed daily")
+st.caption(
+    "Data refreshed daily · Simulated data mode"
+    if user.get("use_simulated_data")
+    else "Data refreshed daily"
+)
 
 st.divider()
 
 # ── Load data ────────────────────────────────────────────────────────────────
-kpi = db.get_kpi_today()
-daily_sales = db.get_daily_sales(days=90)
+kpi = db.get_kpi_today(username)
+daily_sales = db.get_daily_sales(username, days=90)
 
 if not kpi:
     st.error("No data found. Run `python data/sync.py` to populate the database.")
@@ -104,7 +116,6 @@ with s2:
 with s3:
     st.metric("Labor Cost Today", format_currency(kpi["labor_cost"]))
 with s4:
-    # Revenue last 7 days
     rev_7 = daily_sales.tail(7)["revenue"].sum()
     st.metric("Revenue (Last 7 Days)", format_currency(rev_7))
 

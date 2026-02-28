@@ -22,9 +22,9 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install pandas numpy sqlalchemy psycopg2-binary requests
+          pip install pandas numpy sqlalchemy psycopg2-binary requests bcrypt
 
       - name: Run sync
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
-        run: python data/sync.py
+        run: python data/sync.py test

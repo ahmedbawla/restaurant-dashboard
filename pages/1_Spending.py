@@ -6,24 +6,26 @@ import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-import json
 import streamlit as st
 import pandas as pd
 
+from auth import require_auth, render_sidebar_logout
 from components.charts import expense_pie, top_vendors_bar, expense_trend_weekly
 from components.kpi_card import format_currency
 from data import database as db
 
-with open(Path(__file__).parent.parent / "config.json") as f:
-    CONFIG = json.load(f)
-
 st.set_page_config(page_title="Spending — BI Dashboard", layout="wide")
+
+user = require_auth()
+render_sidebar_logout()
+username = user["username"]
+
 st.title("💳 Spending & Expenses")
 st.caption("Source: QuickBooks Online")
 st.divider()
 
 # ── Data ─────────────────────────────────────────────────────────────────────
-expenses = db.get_expenses(days=90)
+expenses = db.get_expenses(username, days=90)
 
 if expenses.empty:
     st.error("No expense data. Run `python data/sync.py` first.")
