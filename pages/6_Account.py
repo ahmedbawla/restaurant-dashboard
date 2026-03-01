@@ -3,6 +3,7 @@ Account Settings — manage email, restaurant name, password, and integrations.
 """
 
 import streamlit as st
+import streamlit.components.v1 as components
 
 from components.theme import page_header
 from data import database as db
@@ -112,10 +113,11 @@ with st.container(border=True):
                     _nonce = generate_nonce()
                     db.update_user(username, oauth_state=_nonce)
                     _auth_url = get_auth_url(username, _nonce)
-                    # Redirect in the same tab so the session is easier to resume
-                    st.markdown(
-                        f'<meta http-equiv="refresh" content="0; url={_auth_url}">',
-                        unsafe_allow_html=True,
+                    # Use window.top to break out of Streamlit's iframe and redirect
+                    # the actual browser window — meta-refresh only redirects the iframe.
+                    components.html(
+                        f'<script>window.top.location.href = "{_auth_url}";</script>',
+                        height=0,
                     )
                     st.info("Redirecting to QuickBooks for authorisation...")
                     st.stop()
