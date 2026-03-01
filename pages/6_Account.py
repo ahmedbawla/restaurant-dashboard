@@ -3,7 +3,6 @@ Account Settings — manage email, restaurant name, password, and integrations.
 """
 
 import streamlit as st
-import streamlit.components.v1 as components
 
 from components.theme import page_header
 from data import database as db
@@ -109,18 +108,20 @@ with st.container(border=True):
                 st.info("QuickBooks app credentials not configured in secrets.toml.")
             else:
                 from utils.oauth_quickbooks import generate_nonce, get_auth_url
-                if st.button("Connect QuickBooks", key="qb_connect", use_container_width=True, type="primary"):
+                # Pre-generate the nonce on page load and persist it so it is
+                # already in the DB when the user clicks the link button.
+                # (st.link_button is pure browser navigation — no Python runs on click.)
+                if "qb_connect_nonce" not in st.session_state:
                     _nonce = generate_nonce()
                     db.update_user(username, oauth_state=_nonce)
-                    _auth_url = get_auth_url(username, _nonce)
-                    # Use window.top to break out of Streamlit's iframe and redirect
-                    # the actual browser window — meta-refresh only redirects the iframe.
-                    components.html(
-                        f'<script>window.top.location.href = "{_auth_url}";</script>',
-                        height=0,
-                    )
-                    st.info("Redirecting to QuickBooks for authorisation...")
-                    st.stop()
+                    st.session_state["qb_connect_nonce"] = _nonce
+                _auth_url = get_auth_url(username, st.session_state["qb_connect_nonce"])
+                st.link_button(
+                    "Connect QuickBooks ↗",
+                    url=_auth_url,
+                    type="primary",
+                    use_container_width=True,
+                )
 
 st.caption(
     "After connecting, click **Sync Now** on the Summary page or wait for the "
