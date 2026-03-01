@@ -28,6 +28,38 @@ apply_professional_theme()
 # ── Run DB migrations on every startup (idempotent) ──────────────────────────
 db.init_db()
 
+# ── QuickBooks OAuth callback ─────────────────────────────────────────────────
+# Intuit redirects back with ?code=...&state=...&realmId=...
+# Handle this BEFORE the auth gate — user may arrive in a fresh session.
+_qp = st.query_params
+if "code" in _qp and "state" in _qp:
+    from utils.oauth_quickbooks import decode_state, exchange_code
+    _oauth_error = ""
+    try:
+        _qb_username, _nonce = decode_state(_qp["state"])
+        _stored = db.get_user(_qb_username)
+        if _stored and _stored.get("oauth_state") == _nonce:
+            _tokens   = exchange_code(_qp["code"])
+            _realm_id = _qp.get("realmId", "")
+            db.update_user(
+                _qb_username,
+                qb_realm_id      = _realm_id,
+                qb_refresh_token = _tokens["refresh_token"],
+                oauth_state      = None,
+                use_simulated_data = False,
+            )
+            _refreshed_user = db.get_user(_qb_username)
+            st.session_state["user"] = dict(_refreshed_user)
+            st.session_state["qb_just_connected"] = True
+        else:
+            _oauth_error = "OAuth state mismatch — please try connecting again."
+    except Exception as _exc:
+        _oauth_error = f"QuickBooks connection failed: {_exc}"
+    st.query_params.clear()
+    if _oauth_error:
+        st.session_state["oauth_error"] = _oauth_error
+    st.rerun()
+
 # ── Seed demo account once per session ───────────────────────────────────────
 if "seeded" not in st.session_state:
     seed_test_user()

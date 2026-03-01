@@ -195,10 +195,16 @@ def init_db() -> None:
         except Exception:
             pass  # column already exists with correct type
 
-    # Add email column to users table (the key migration)
+    # Add email column to users table
     with engine.begin() as conn:
         conn.execute(text(
             "ALTER TABLE users ADD COLUMN IF NOT EXISTS email TEXT"
+        ))
+
+    # Add oauth_state column (stores CSRF nonce during OAuth flow)
+    with engine.begin() as conn:
+        conn.execute(text(
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS oauth_state TEXT"
         ))
 
     # ── Step 3: Composite PKs (each in its own transaction) ───────────────────
@@ -311,7 +317,11 @@ def authenticate_user(username: str, plain_password: str) -> dict | None:
 
 def update_user(username: str, **fields) -> None:
     """Update allowed user fields in-place."""
-    allowed = {"email", "restaurant_name", "password_hash"}
+    allowed = {
+        "email", "restaurant_name", "password_hash",
+        "qb_realm_id", "qb_refresh_token", "oauth_state",
+        "use_simulated_data",
+    }
     updates = {k: v for k, v in fields.items() if k in allowed}
     if not updates:
         return

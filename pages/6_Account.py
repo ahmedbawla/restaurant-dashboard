@@ -1,14 +1,21 @@
 """
-Account Settings — manage email, restaurant name, and password.
+Account Settings — manage email, restaurant name, password, and integrations.
 """
 
 import streamlit as st
 
 from components.theme import page_header
 from data import database as db
+from utils.oauth_quickbooks import is_configured as qb_secrets_configured
 
 user     = st.session_state["user"]
 username = user["username"]
+
+# ── Surface any OAuth result messages ────────────────────────────────────────
+if st.session_state.pop("qb_just_connected", False):
+    st.success("QuickBooks connected successfully. Your data will sync shortly.")
+if "oauth_error" in st.session_state:
+    st.error(st.session_state.pop("oauth_error"))
 
 page_header(
     "⚙️ Account Settings",
@@ -68,12 +75,64 @@ if save_pw:
 
 st.divider()
 
+# ── Integrations ──────────────────────────────────────────────────────────────
+st.subheader("Integrations")
+
+qb_connected = bool(user.get("qb_realm_id") and user.get("qb_refresh_token"))
+
+with st.container(border=True):
+    col_logo, col_status, col_action = st.columns([1, 3, 2])
+    with col_logo:
+        st.markdown("**QuickBooks Online**")
+        st.caption("Expenses & Cash Flow")
+    with col_status:
+        if qb_connected:
+            st.success(f"Connected — Company ID: `{user['qb_realm_id']}`")
+        else:
+            st.warning("Not connected")
+    with col_action:
+        if qb_connected:
+            if st.button("Disconnect", key="qb_disconnect", use_container_width=True):
+                db.update_user(
+                    username,
+                    qb_realm_id=None,
+                    qb_refresh_token=None,
+                    use_simulated_data=True,
+                )
+                user.update({"qb_realm_id": None, "qb_refresh_token": None, "use_simulated_data": True})
+                st.session_state["user"] = user
+                st.success("QuickBooks disconnected.")
+                st.rerun()
+        else:
+            if not qb_secrets_configured():
+                st.info("QuickBooks app credentials not configured in secrets.toml.")
+            else:
+                from utils.oauth_quickbooks import generate_nonce, get_auth_url
+                if st.button("Connect QuickBooks", key="qb_connect", use_container_width=True, type="primary"):
+                    _nonce = generate_nonce()
+                    db.update_user(username, oauth_state=_nonce)
+                    _auth_url = get_auth_url(username, _nonce)
+                    # Redirect in the same tab so the session is easier to resume
+                    st.markdown(
+                        f'<meta http-equiv="refresh" content="0; url={_auth_url}">',
+                        unsafe_allow_html=True,
+                    )
+                    st.info("Redirecting to QuickBooks for authorisation...")
+                    st.stop()
+
+st.caption(
+    "After connecting, click **Sync Now** on the Summary page or wait for the "
+    "next scheduled sync to pull your live QuickBooks data."
+)
+
+st.divider()
+
 # ── Account Info ──────────────────────────────────────────────────────────────
 st.subheader("Account Information")
 c1, c2, c3 = st.columns(3)
-c1.metric("Username",        username)
-c2.metric("Data Mode",       "Simulated" if user.get("use_simulated_data") else "Live API")
-c3.metric("Email on File",   user.get("email") or "Not set")
+c1.metric("Username",      username)
+c2.metric("Data Mode",     "Live API" if not user.get("use_simulated_data") else "Simulated")
+c3.metric("Email on File", user.get("email") or "Not set")
 
 st.divider()
 st.caption("🔒 All changes are saved immediately and reflected across the dashboard.")
