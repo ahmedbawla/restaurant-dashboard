@@ -51,6 +51,10 @@ def render_sidebar_logout() -> None:
 
 
 def _show_auth_ui() -> None:
+    with st.sidebar:
+        st.markdown("**🍽️ Restaurant BI Dashboard**")
+        st.caption("Sign in to access your dashboard")
+
     st.title("🍽️ Restaurant BI Dashboard")
     st.caption("Demo: username `test` / password `test`")
 

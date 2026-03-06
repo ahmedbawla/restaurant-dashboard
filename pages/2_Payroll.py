@@ -7,9 +7,9 @@ from pathlib import Path
 
 import streamlit as st
 
-from components.charts import labor_cost_gauge, labor_trend, hours_by_dept
+from components.charts import labor_cost_gauge, labor_trend, hours_by_dept, labor_pct_by_dept
 from components.kpi_card import format_currency, format_pct
-from components.theme import page_header
+from components.theme import page_header, section_header
 from data import database as db
 
 with open(Path(__file__).parent.parent / "config.json") as f:
@@ -29,7 +29,6 @@ page_header(
     subtitle="Labour cost analysis and payroll summary sourced from Paychex.",
     eyebrow="Workforce Analytics",
 )
-st.divider()
 
 # ── Data ─────────────────────────────────────────────────────────────────────
 daily_labor    = db.get_daily_labor(username,    start_date=start_date, end_date=end_date)
@@ -60,26 +59,44 @@ merged       = labor_by_day.merge(daily_sales[["date","revenue"]], on="date", ho
 merged["labor_pct"] = merged["labor_cost"] / merged["revenue"] * 100
 avg_lp = merged["labor_pct"].mean() if not merged.empty else 0.0
 
-weekly_total  = week_data["gross_pay"].sum()
-total_hours   = week_data["total_hours"].sum()
-ot_employees  = week_data[week_data["overtime_hours"] > 0]
-rev_per_lhr   = recent_revenue / max(1, daily_labor[daily_labor["date"] == recent_date]["hours"].sum())
+weekly_total = week_data["gross_pay"].sum()
+total_hours  = week_data["total_hours"].sum()
+ot_employees = week_data[week_data["overtime_hours"] > 0]
+rev_per_lhr  = recent_revenue / max(1, daily_labor[daily_labor["date"] == recent_date]["hours"].sum())
+period_labor_total = daily_labor["labor_cost"].sum()
+period_revenue     = daily_sales["revenue"].sum()
+period_labor_pct   = period_labor_total / period_revenue * 100 if period_revenue else 0.0
 
-# ── KPI row ───────────────────────────────────────────────────────────────────
-k1, k2, k3, k4 = st.columns(4)
+# ── Overtime alert banner ─────────────────────────────────────────────────────
+if not ot_employees.empty:
+    n_ot = len(ot_employees)
+    st.warning(
+        f"**{n_ot} employee{'s' if n_ot > 1 else ''}** logged overtime in the selected week. "
+        "Review the Overtime Alerts section below."
+    )
+
+# ── KPI strip ─────────────────────────────────────────────────────────────────
+section_header("Labour Overview")
+k1, k2, k3, k4, k5 = st.columns(5)
 with k1:
-    st.metric("Labour Cost % (Latest Day)", f"{labor_pct:.1f}%",
-              delta=f"Avg period: {avg_lp:.1f}%", delta_color="off")
+    st.metric("Labor % (Latest Day)", f"{labor_pct:.1f}%",
+              delta=f"Avg: {avg_lp:.1f}%", delta_color="off")
 with k2:
-    st.metric(f"Weekly Payroll — {selected_week}", format_currency(weekly_total))
+    st.metric("Period Labor %",       f"{period_labor_pct:.1f}%",
+              help="Total labor cost as % of total revenue for the selected period.")
 with k3:
-    st.metric("Total Hours (Selected Week)", f"{total_hours:,.1f} hrs")
+    st.metric(f"Weekly Payroll",      format_currency(weekly_total),
+              help=f"Week of {selected_week}")
 with k4:
-    st.metric("Revenue per Labour Hour", format_currency(rev_per_lhr))
+    st.metric("Total Hours (Week)",   f"{total_hours:,.0f} hrs")
+with k5:
+    st.metric("Rev per Labor Hour",   format_currency(rev_per_lhr),
+              help="Latest day revenue divided by hours worked.")
 
 st.divider()
 
-# ── Gauge + Hours by dept ─────────────────────────────────────────────────────
+# ── Gauge + Dept hours/pay ────────────────────────────────────────────────────
+section_header("Cost Gauges")
 col1, col2 = st.columns([1, 2])
 with col1:
     st.plotly_chart(
@@ -89,18 +106,26 @@ with col1:
 with col2:
     st.plotly_chart(hours_by_dept(weekly_payroll, week=selected_week), use_container_width=True)
 
-st.plotly_chart(labor_trend(daily_labor, daily_sales), use_container_width=True)
+st.divider()
+
+# ── Labor % by department ─────────────────────────────────────────────────────
+section_header("Labor Cost % by Department")
+col_dept, col_trend = st.columns(2)
+with col_dept:
+    st.plotly_chart(labor_pct_by_dept(weekly_payroll, daily_sales), use_container_width=True)
+with col_trend:
+    st.plotly_chart(labor_trend(daily_labor, daily_sales), use_container_width=True)
 
 st.divider()
 
 # ── Overtime alerts ───────────────────────────────────────────────────────────
-st.subheader("⚠️ Overtime Alerts")
+section_header("Overtime Alerts")
 if ot_employees.empty:
     st.success(f"No employees exceeded {OT_THRESHOLD} hours during the selected week.")
 else:
     ot = ot_employees[["employee_name","dept","role","regular_hours","overtime_hours","total_hours","gross_pay"]].copy()
     ot["gross_pay"]      = ot["gross_pay"].apply(lambda x: f"${x:,.2f}")
-    ot["overtime_hours"] = ot["overtime_hours"].apply(lambda x: f"⚠️ {x:.1f} hrs")
+    ot["overtime_hours"] = ot["overtime_hours"].apply(lambda x: f"{x:.1f} hrs")
     ot["regular_hours"]  = ot["regular_hours"].apply(lambda x: f"{x:.1f} hrs")
     ot["total_hours"]    = ot["total_hours"].apply(lambda x: f"{x:.1f} hrs")
     ot.columns = ["Employee","Department","Role","Regular Hours","Overtime Hours","Total Hours","Gross Pay"]
@@ -108,15 +133,16 @@ else:
 
 # ── Payroll detail ────────────────────────────────────────────────────────────
 st.divider()
-st.subheader(f"Payroll Detail — Week of {selected_week}")
-pd_ = week_data[["employee_name","dept","role","employment_type","regular_hours","overtime_hours","total_hours","gross_pay"]].copy()
+section_header(f"Payroll Detail — Week of {selected_week}")
+pd_ = week_data[["employee_name","dept","role","employment_type","regular_hours",
+                  "overtime_hours","total_hours","gross_pay"]].copy()
 pd_["gross_pay"]      = pd_["gross_pay"].apply(lambda x: f"${x:,.2f}")
 pd_["regular_hours"]  = pd_["regular_hours"].apply(lambda x: f"{x:.1f}")
 pd_["overtime_hours"] = pd_["overtime_hours"].apply(lambda x: f"{x:.1f}")
 pd_["total_hours"]    = pd_["total_hours"].apply(lambda x: f"{x:.1f}")
 pd_ = pd_.sort_values(["dept","employee_name"])
 pd_.columns = ["Employee","Department","Role","Employment Type","Regular Hrs","Overtime Hrs","Total Hrs","Gross Pay"]
-st.dataframe(pd_, use_container_width=True, height=500, hide_index=True)
+st.dataframe(pd_, use_container_width=True, height=480, hide_index=True)
 
 st.divider()
-st.caption("🔒 Confidential  ·  For authorised recipients only")
+st.caption("Confidential  ·  For authorised recipients only")
