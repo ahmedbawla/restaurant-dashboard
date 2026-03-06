@@ -1,6 +1,8 @@
 """
-Real Toast POS connector — placeholder.
-Replace the stub methods below with actual Toast API calls.
+Real Toast POS connector — OAuth 2.0 client_credentials.
+
+Uses clientId + clientSecret (stored per user in DB) to obtain a short-lived
+Bearer token on demand.  Tokens are cached in-process by oauth_toast.
 Toast API docs: https://doc.toasttab.com/
 """
 
@@ -16,20 +18,25 @@ class ToastConnector(BaseConnector):
     Connects to the Toast POS REST API.
 
     Config keys expected:
-        api_key         : Toast API access token
-        restaurant_guid : GUID of the restaurant location
+        client_id       : Toast OAuth client ID  (stored in toast_api_key column)
+        client_secret   : Toast OAuth client secret
+        restaurant_guid : GUID of the restaurant location (auto-fetched on connect)
     """
 
     BASE_URL = "https://ws-api.toasttab.com"
 
     def __init__(self, config: dict):
-        self.api_key = config.get("api_key", "")
-        self.restaurant_guid = config.get("restaurant_guid", "")
+        self.client_id       = config["client_id"]
+        self.client_secret   = config["client_secret"]
+        self.restaurant_guid = config["restaurant_guid"]
 
     def _headers(self) -> dict:
+        from utils.oauth_toast import get_access_token
+        token = get_access_token(self.client_id, self.client_secret)
         return {
             "Toast-Restaurant-External-ID": self.restaurant_guid,
-            "Authorization": f"Bearer {self.api_key}",
+            "Authorization": f"Bearer {token}",
+            "Content-Type":  "application/json",
         }
 
     # ------------------------------------------------------------------
@@ -37,7 +44,7 @@ class ToastConnector(BaseConnector):
     # ------------------------------------------------------------------
 
     def get_sales(self, start_date: date, end_date: date) -> pd.DataFrame:
-        raise NotImplementedError("Toast real connector not yet implemented. Set use_simulated_data=true in config.json.")
+        raise NotImplementedError("Toast real connector not yet implemented.")
 
     def get_labor(self, start_date: date, end_date: date) -> pd.DataFrame:
         raise NotImplementedError("Toast real connector not yet implemented.")
@@ -46,9 +53,7 @@ class ToastConnector(BaseConnector):
         raise NotImplementedError("Toast real connector not yet implemented.")
 
     def get_expenses(self, start_date: date, end_date: date) -> pd.DataFrame:
-        # Toast handles sales, not expenses — delegate to QuickBooks
         return pd.DataFrame()
 
     def get_payroll(self, start_date: date, end_date: date) -> pd.DataFrame:
-        # Toast handles sales, not payroll — delegate to Paychex
         return pd.DataFrame()

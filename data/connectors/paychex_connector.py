@@ -1,6 +1,8 @@
 """
-Real Paychex connector — placeholder.
-Replace the stub methods below with actual Paychex Flex API calls.
+Real Paychex connector — OAuth 2.0 client_credentials.
+
+Uses clientId + clientSecret (stored per user in DB) to obtain a short-lived
+Bearer token on demand.  Tokens are cached in-process by oauth_paychex.
 Paychex API docs: https://developer.paychex.com/
 """
 
@@ -13,37 +15,41 @@ from data.connectors.base import BaseConnector
 
 class PaychexConnector(BaseConnector):
     """
-    Connects to the Paychex Flex REST API (OAuth2).
+    Connects to the Paychex Flex REST API.
 
     Config keys expected:
-        client_id     : Paychex OAuth2 client ID
-        client_secret : Paychex OAuth2 client secret
-        company_id    : Paychex company ID
+        client_id     : Paychex OAuth client ID
+        client_secret : Paychex OAuth client secret
+        company_id    : Paychex company ID (auto-fetched on connect)
     """
 
-    AUTH_URL = "https://iam.paychex.com/security/oauth2/v2/token"
     BASE_URL = "https://api.paychex.com"
 
     def __init__(self, config: dict):
-        self.client_id = config.get("client_id", "")
-        self.client_secret = config.get("client_secret", "")
-        self.company_id = config.get("company_id", "")
-        self._access_token: str | None = None
+        self.client_id     = config["client_id"]
+        self.client_secret = config["client_secret"]
+        self.company_id    = config["company_id"]
 
     def _get_token(self) -> str:
-        # TODO: implement OAuth2 client_credentials grant
-        raise NotImplementedError("Paychex OAuth2 not yet implemented.")
+        from utils.oauth_paychex import get_access_token
+        return get_access_token(self.client_id, self.client_secret)
+
+    def _headers(self) -> dict:
+        return {
+            "Authorization": f"Bearer {self._get_token()}",
+            "Content-Type":  "application/json",
+            "Accept":        "application/json",
+        }
 
     # ------------------------------------------------------------------
     # TODO: implement each method with real Paychex API calls
     # ------------------------------------------------------------------
 
     def get_sales(self, start_date: date, end_date: date) -> pd.DataFrame:
-        # Paychex handles payroll, not sales
         return pd.DataFrame()
 
     def get_labor(self, start_date: date, end_date: date) -> pd.DataFrame:
-        raise NotImplementedError("Paychex real connector not yet implemented. Set use_simulated_data=true in config.json.")
+        raise NotImplementedError("Paychex real connector not yet implemented.")
 
     def get_menu_items(self) -> pd.DataFrame:
         return pd.DataFrame()

@@ -8,6 +8,15 @@ from components.theme import page_header
 from data import database as db
 from utils.oauth_quickbooks import is_configured as qb_secrets_configured
 
+
+def _any_real_connector(u: dict) -> bool:
+    """True if at least one integration still has live credentials."""
+    return bool(
+        (u.get("toast_api_key") and u.get("toast_client_secret") and u.get("toast_guid")) or
+        (u.get("paychex_client_id") and u.get("paychex_client_secret") and u.get("paychex_company_id")) or
+        (u.get("qb_realm_id") and u.get("qb_refresh_token"))
+    )
+
 user     = st.session_state["user"]
 username = user["username"]
 
@@ -78,8 +87,17 @@ st.divider()
 # ── Integrations ──────────────────────────────────────────────────────────────
 st.subheader("Integrations")
 
-qb_connected = bool(user.get("qb_realm_id") and user.get("qb_refresh_token"))
+qb_connected    = bool(user.get("qb_realm_id") and user.get("qb_refresh_token"))
+toast_connected = bool(
+    (user.get("toast_api_key") and user.get("toast_client_secret") and user.get("toast_guid")) or
+    (user.get("toast_username") and user.get("toast_password_enc"))
+)
+px_connected = bool(
+    (user.get("paychex_client_id") and user.get("paychex_client_secret") and user.get("paychex_company_id")) or
+    (user.get("paychex_username") and user.get("paychex_password_enc"))
+)
 
+# ── QuickBooks Online ─────────────────────────────────────────────────────────
 with st.container(border=True):
     col_logo, col_status, col_action = st.columns([1, 3, 2])
     with col_logo:
@@ -93,40 +111,162 @@ with st.container(border=True):
     with col_action:
         if qb_connected:
             if st.button("Disconnect", key="qb_disconnect", use_container_width=True):
-                db.update_user(
-                    username,
-                    qb_realm_id=None,
-                    qb_refresh_token=None,
-                    use_simulated_data=True,
-                )
-                user.update({"qb_realm_id": None, "qb_refresh_token": None, "use_simulated_data": True})
+                db.update_user(username, qb_realm_id=None, qb_refresh_token=None)
+                user.update({"qb_realm_id": None, "qb_refresh_token": None})
+                if not _any_real_connector(user):
+                    db.update_user(username, use_simulated_data=True)
+                    user["use_simulated_data"] = True
                 st.session_state["user"] = user
-                st.success("QuickBooks disconnected.")
                 st.rerun()
         else:
             if not qb_secrets_configured():
-                st.info("QuickBooks app credentials not configured in secrets.toml.")
+                st.info("App credentials not configured in secrets.toml.")
             else:
-                from utils.oauth_quickbooks import generate_nonce, get_auth_url
-                # Pre-generate the nonce on page load and persist it so it is
-                # already in the DB when the user clicks the link button.
-                # (st.link_button is pure browser navigation — no Python runs on click.)
+                from utils.oauth_quickbooks import generate_nonce, get_auth_url as qb_auth_url
                 if "qb_connect_nonce" not in st.session_state:
                     _nonce = generate_nonce()
                     db.update_user(username, oauth_state=_nonce)
                     st.session_state["qb_connect_nonce"] = _nonce
-                _auth_url = get_auth_url(username, st.session_state["qb_connect_nonce"])
-                st.link_button(
-                    "Connect QuickBooks ↗",
-                    url=_auth_url,
-                    type="primary",
-                    use_container_width=True,
+                st.markdown(
+                    f'<a href="{qb_auth_url(username, st.session_state["qb_connect_nonce"])}" '
+                    f'target="_blank" rel="noopener noreferrer">'
+                    f'<button style="width:100%;background:#FF4B4B;color:white;border:none;'
+                    f'padding:0.45rem 1rem;border-radius:0.5rem;font-weight:600;'
+                    f'font-size:0.9rem;cursor:pointer;">Connect QuickBooks ↗</button></a>',
+                    unsafe_allow_html=True,
                 )
+
+# ── Toast POS ─────────────────────────────────────────────────────────────────
+with st.container(border=True):
+    col_logo, col_status, col_action = st.columns([1, 3, 2])
+    with col_logo:
+        st.markdown("**Toast POS**")
+        st.caption("Sales & Labor")
+    with col_status:
+        if toast_connected:
+            label = user.get("toast_username") or user.get("toast_guid") or "Connected"
+            st.success(f"Connected — {label}")
+        else:
+            st.warning("Not connected")
+    with col_action:
+        if toast_connected:
+            if st.button("Disconnect", key="toast_disconnect", use_container_width=True):
+                db.update_user(
+                    username,
+                    toast_username=None, toast_password_enc=None,
+                    toast_api_key=None, toast_client_secret=None, toast_guid=None,
+                )
+                user.update({
+                    "toast_username": None, "toast_password_enc": None,
+                    "toast_api_key": None, "toast_client_secret": None, "toast_guid": None,
+                })
+                if not _any_real_connector(user):
+                    db.update_user(username, use_simulated_data=True)
+                    user["use_simulated_data"] = True
+                st.session_state["user"] = user
+                st.rerun()
+
+    if not toast_connected:
+        with st.form("toast_connect_form"):
+            st.caption(
+                "Enter your **Toast POS login** (the same email and password you use "
+                "at pos.toasttab.com). Your password is stored encrypted."
+            )
+            t_col1, t_col2 = st.columns(2)
+            t_email    = t_col1.text_input("Toast Email")
+            t_password = t_col2.text_input("Toast Password", type="password")
+            toast_submit = st.form_submit_button("Connect Toast POS", use_container_width=True)
+
+        if toast_submit:
+            if not (t_email.strip() and t_password.strip()):
+                st.error("Email and password are required.")
+            else:
+                from utils.encryption import encrypt
+                db.update_user(
+                    username,
+                    toast_username=t_email.strip(),
+                    toast_password_enc=encrypt(t_password),
+                    use_simulated_data=False,
+                )
+                user.update({
+                    "toast_username":     t_email.strip(),
+                    "toast_password_enc": encrypt(t_password),
+                    "use_simulated_data": False,
+                })
+                st.session_state["user"] = user
+                st.success("Toast POS credentials saved. Data will sync tonight at 6 AM.")
+                st.rerun()
+
+# ── Paychex Flex ──────────────────────────────────────────────────────────────
+with st.container(border=True):
+    col_logo, col_status, col_action = st.columns([1, 3, 2])
+    with col_logo:
+        st.markdown("**Paychex Flex**")
+        st.caption("Payroll & Labor")
+    with col_status:
+        if px_connected:
+            label = user.get("paychex_username") or user.get("paychex_company_id") or "Connected"
+            st.success(f"Connected — {label}")
+        else:
+            st.warning("Not connected")
+    with col_action:
+        if px_connected:
+            if st.button("Disconnect", key="paychex_disconnect", use_container_width=True):
+                db.update_user(
+                    username,
+                    paychex_username=None, paychex_password_enc=None,
+                    paychex_client_id=None, paychex_client_secret=None, paychex_company_id=None,
+                )
+                user.update({
+                    "paychex_username": None, "paychex_password_enc": None,
+                    "paychex_client_id": None, "paychex_client_secret": None, "paychex_company_id": None,
+                })
+                if not _any_real_connector(user):
+                    db.update_user(username, use_simulated_data=True)
+                    user["use_simulated_data"] = True
+                st.session_state["user"] = user
+                st.rerun()
+
+    if not px_connected:
+        with st.form("paychex_connect_form"):
+            st.caption(
+                "Enter your **Paychex Flex login** (the same username and password you use "
+                "at myapps.paychex.com). Your password is stored encrypted."
+            )
+            p_col1, p_col2 = st.columns(2)
+            p_user     = p_col1.text_input("Paychex Username")
+            p_password = p_col2.text_input("Paychex Password", type="password")
+            paychex_submit = st.form_submit_button("Connect Paychex Flex", use_container_width=True)
+
+        if paychex_submit:
+            if not (p_user.strip() and p_password.strip()):
+                st.error("Username and password are required.")
+            else:
+                from utils.encryption import encrypt
+                db.update_user(
+                    username,
+                    paychex_username=p_user.strip(),
+                    paychex_password_enc=encrypt(p_password),
+                    use_simulated_data=False,
+                )
+                user.update({
+                    "paychex_username":     p_user.strip(),
+                    "paychex_password_enc": encrypt(p_password),
+                    "use_simulated_data":   False,
+                })
+                st.session_state["user"] = user
+                st.success("Paychex credentials saved. Data will sync tonight at 6 AM.")
+                st.rerun()
 
 st.caption(
     "After connecting, click **Sync Now** on the Summary page or wait for the "
-    "next scheduled sync to pull your live QuickBooks data."
+    "next scheduled sync to pull your live data."
 )
+
+if not qb_connected and "qb_connect_nonce" in st.session_state:
+    with st.expander("Debug: view QB auth URL", expanded=False):
+        from utils.oauth_quickbooks import get_auth_url as qb_auth_url
+        st.code(qb_auth_url(username, st.session_state["qb_connect_nonce"]) if qb_secrets_configured() else "Secrets not configured")
 
 st.divider()
 

@@ -12,7 +12,15 @@ This means a real user can connect QuickBooks without breaking Toast/Paychex
 
 
 def _has_toast_creds(user: dict) -> bool:
-    return bool(user.get("toast_api_key") and user.get("toast_guid"))
+    return bool(
+        user.get("toast_api_key") and
+        user.get("toast_client_secret") and
+        user.get("toast_guid")
+    )
+
+
+def _has_toast_scraper_creds(user: dict) -> bool:
+    return bool(user.get("toast_username") and user.get("toast_password_enc"))
 
 
 def _has_paychex_creds(user: dict) -> bool:
@@ -21,6 +29,10 @@ def _has_paychex_creds(user: dict) -> bool:
         user.get("paychex_client_secret") and
         user.get("paychex_company_id")
     )
+
+
+def _has_paychex_scraper_creds(user: dict) -> bool:
+    return bool(user.get("paychex_username") and user.get("paychex_password_enc"))
 
 
 def _has_qb_creds(user: dict) -> bool:
@@ -36,9 +48,11 @@ def get_connector(source: str, user: dict):
 
     if source == "toast":
         if not use_sim and _has_toast_creds(user):
+            # API connector (developer portal credentials)
             from data.connectors.toast_connector import ToastConnector
             conn = ToastConnector({
-                "api_key":         user["toast_api_key"],
+                "client_id":       user["toast_api_key"],
+                "client_secret":   user["toast_client_secret"],
                 "restaurant_guid": user["toast_guid"],
             })
             return {
@@ -46,6 +60,20 @@ def get_connector(source: str, user: dict):
                 "get_hourly_sales":    conn.get_hourly_sales,
                 "get_menu_items":      conn.get_menu_items,
                 "get_menu_item_sales": conn.get_menu_item_sales,
+            }
+        if not use_sim and _has_toast_scraper_creds(user):
+            # Portal scraper (username + password login)
+            from data.scrapers.toast_scraper import ToastScraper
+            from utils.encryption import decrypt
+            scraper = ToastScraper({
+                "username": user["toast_username"],
+                "password": decrypt(user["toast_password_enc"]),
+            })
+            return {
+                "get_sales":           scraper.get_sales,
+                "get_hourly_sales":    scraper.get_hourly_sales,
+                "get_menu_items":      scraper.get_menu_items,
+                "get_menu_item_sales": scraper.get_menu_item_sales,
             }
         from data.simulated.toast_simulated import (
             get_sales, get_hourly_sales, get_menu_items, get_menu_item_sales,
@@ -59,6 +87,7 @@ def get_connector(source: str, user: dict):
 
     elif source == "paychex":
         if not use_sim and _has_paychex_creds(user):
+            # API connector (developer portal credentials)
             from data.connectors.paychex_connector import PaychexConnector
             conn = PaychexConnector({
                 "client_id":     user["paychex_client_id"],
@@ -69,6 +98,19 @@ def get_connector(source: str, user: dict):
                 "get_labor":     conn.get_labor,
                 "get_payroll":   conn.get_payroll,
                 "get_employees": conn.get_employees,
+            }
+        if not use_sim and _has_paychex_scraper_creds(user):
+            # Portal scraper (username + password login)
+            from data.scrapers.paychex_scraper import PaychexScraper
+            from utils.encryption import decrypt
+            scraper = PaychexScraper({
+                "username": user["paychex_username"],
+                "password": decrypt(user["paychex_password_enc"]),
+            })
+            return {
+                "get_labor":     scraper.get_labor,
+                "get_payroll":   scraper.get_payroll,
+                "get_employees": scraper.get_employees,
             }
         from data.simulated.paychex_simulated import get_labor, get_payroll, get_employees
         return {

@@ -20,11 +20,14 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install dependencies
-        run: |
-          pip install pandas numpy sqlalchemy psycopg2-binary requests bcrypt
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
 
-      - name: Run sync
+      - name: Install Playwright browsers
+        run: playwright install chromium --with-deps
+
+      - name: Run sync for all users
         env:
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
-        run: python data/sync.py test
+          DATABASE_URL:   ${{ secrets.DATABASE_URL }}
+          ENCRYPTION_KEY: ${{ secrets.ENCRYPTION_KEY }}
+        run: python data/sync.py --all-users

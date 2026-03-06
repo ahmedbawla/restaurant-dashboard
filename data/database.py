@@ -88,14 +88,21 @@ def init_db() -> None:
                 restaurant_name       TEXT NOT NULL DEFAULT '',
                 use_simulated_data    BOOLEAN NOT NULL DEFAULT TRUE,
                 toast_api_key         TEXT,
+                toast_client_secret   TEXT,
+                toast_refresh_token   TEXT,
                 toast_guid            TEXT,
                 paychex_client_id     TEXT,
                 paychex_client_secret TEXT,
+                paychex_refresh_token TEXT,
                 paychex_company_id    TEXT,
                 qb_client_id          TEXT,
                 qb_client_secret      TEXT,
                 qb_realm_id           TEXT,
                 qb_refresh_token      TEXT,
+                toast_username        TEXT,
+                toast_password_enc    TEXT,
+                paychex_username      TEXT,
+                paychex_password_enc  TEXT,
                 created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW()
             )
         """))
@@ -206,6 +213,31 @@ def init_db() -> None:
         conn.execute(text(
             "ALTER TABLE users ADD COLUMN IF NOT EXISTS oauth_state TEXT"
         ))
+
+    # Add toast_client_secret column (legacy, kept for backward compat)
+    with engine.begin() as conn:
+        conn.execute(text(
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS toast_client_secret TEXT"
+        ))
+
+    # Add toast_refresh_token column (OAuth 2.0 Authorization Code flow)
+    with engine.begin() as conn:
+        conn.execute(text(
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS toast_refresh_token TEXT"
+        ))
+
+    # Add paychex_refresh_token column (OAuth 2.0 Authorization Code flow)
+    with engine.begin() as conn:
+        conn.execute(text(
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS paychex_refresh_token TEXT"
+        ))
+
+    # Add portal login credential columns for scraper-based access
+    for col in ("toast_username", "toast_password_enc", "paychex_username", "paychex_password_enc"):
+        with engine.begin() as conn:
+            conn.execute(text(
+                f"ALTER TABLE users ADD COLUMN IF NOT EXISTS {col} TEXT"
+            ))
 
     # ── Step 3: Composite PKs (each in its own transaction) ───────────────────
     for tbl, pk_cols in _TABLE_PKS.items():
@@ -319,6 +351,10 @@ def update_user(username: str, **fields) -> None:
     """Update allowed user fields in-place."""
     allowed = {
         "email", "restaurant_name", "password_hash",
+        "toast_api_key", "toast_client_secret", "toast_guid",
+        "toast_username", "toast_password_enc",
+        "paychex_client_id", "paychex_client_secret", "paychex_company_id",
+        "paychex_username", "paychex_password_enc",
         "qb_realm_id", "qb_refresh_token", "oauth_state",
         "use_simulated_data",
     }

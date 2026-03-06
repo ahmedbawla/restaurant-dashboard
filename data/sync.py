@@ -68,10 +68,36 @@ def sync_all(user: dict, days_back: int = 90) -> None:
     print("[sync] Done.")
 
 
+def get_all_users() -> list[dict]:
+    """Return all users who have real credentials (not simulated-only)."""
+    from sqlalchemy import create_engine, text as _text
+    from data.database import get_engine
+    engine = get_engine()
+    with engine.connect() as conn:
+        rows = conn.execute(_text(
+            "SELECT * FROM users WHERE use_simulated_data = FALSE"
+        )).mappings().all()
+    return [dict(r) for r in rows]
+
+
 if __name__ == "__main__":
-    username = sys.argv[1] if len(sys.argv) > 1 else "test"
-    user = get_user(username)
-    if user is None:
-        print(f"[sync] Error: user '{username}' not found in database.")
-        sys.exit(1)
-    sync_all(user)
+    if "--all-users" in sys.argv:
+        init_db()
+        users = get_all_users()
+        if not users:
+            print("[sync] No users with live credentials found. Syncing demo user.")
+            users = [get_user("test")]
+            users = [u for u in users if u]
+        for u in users:
+            print(f"\n[sync] ══ Syncing user: {u['username']} ══")
+            try:
+                sync_all(u)
+            except Exception as exc:
+                print(f"[sync] ERROR for {u['username']}: {exc}")
+    else:
+        username = sys.argv[1] if len(sys.argv) > 1 else "test"
+        user = get_user(username)
+        if user is None:
+            print(f"[sync] Error: user '{username}' not found in database.")
+            sys.exit(1)
+        sync_all(user)
