@@ -22,9 +22,11 @@ def seed_test_user() -> None:
             username="test",
             plain_password="test",
             email="ahmed.bawla@gmail.com",
-            restaurant_name="The Brass Fork (Demo)",
+            restaurant_name="The Daily Grind (Demo)",
             use_simulated_data=False,
         )
+    else:
+        db.update_user("test", restaurant_name="The Daily Grind (Demo)")
 
 
 def require_auth() -> dict:
