@@ -20,22 +20,35 @@ def _any_real_connector(u: dict) -> bool:
 user     = st.session_state["user"]
 username = user["username"]
 
-# ── Surface any OAuth result messages ────────────────────────────────────────
+# ── Trigger QB sync immediately after OAuth redirect ─────────────────────────
 if st.session_state.pop("qb_just_connected", False):
     from data.sync import sync_all as _sync_all
     with st.spinner("QuickBooks connected — syncing your data now…"):
-        _qb_res = _sync_all(user)
+        _qb_res = _sync_all(db.get_user(username))
     _qb_err = _qb_res.get("quickbooks", {}).get("error")
+    _qb_rows = _qb_res.get("quickbooks", {}).get("rows", 0)
     if _qb_err:
-        st.error(f"QuickBooks sync failed: {_qb_err}")
-        st.warning("Your QuickBooks connection was saved but no data could be imported. Check your QB permissions.")
+        st.session_state["_acct_flash"] = [
+            {"type": "error",   "text": f"QuickBooks sync failed: {_qb_err}"},
+            {"type": "warning", "text": "Connection saved but no data was imported. Check your QuickBooks permissions."},
+        ]
+    elif _qb_rows == 0:
+        st.session_state["_acct_flash"] = [
+            {"type": "warning", "text": "QuickBooks connected but no data was returned. Ensure your QB account has transactions in the selected date range."},
+        ]
     else:
-        _rows = _qb_res.get("quickbooks", {}).get("rows", 0)
-        st.success(f"QuickBooks connected and synced {_rows} rows.")
+        st.session_state["_acct_flash"] = [
+            {"type": "success", "text": f"QuickBooks connected and synced {_qb_rows} rows."},
+        ]
     st.session_state["user"] = db.get_user(username)
-    user = st.session_state["user"]
+    st.rerun()
+
 if "oauth_error" in st.session_state:
     st.error(st.session_state.pop("oauth_error"))
+
+# ── Display persistent flash messages (survive rerun) ─────────────────────────
+for _msg in st.session_state.pop("_acct_flash", []):
+    getattr(st, _msg["type"])(_msg["text"])
 
 page_header(
     "⚙️ Account Settings",
@@ -210,16 +223,21 @@ with st.container(border=True):
                 st.session_state["user"] = user
                 with st.spinner("Credentials saved — attempting to sync Toast data…"):
                     _res = _sync_all(db.get_user(username))
-                _err = _res.get("toast", {}).get("error")
+                _err  = _res.get("toast", {}).get("error")
+                _rows = _res.get("toast", {}).get("rows", 0)
                 if _err:
-                    st.error(f"Toast sync failed: {_err}")
-                    st.warning("Credentials saved but no data was imported. The nightly sync will retry automatically.")
+                    st.session_state["_acct_flash"] = [
+                        {"type": "error",   "text": f"Toast sync failed: {_err}"},
+                        {"type": "warning", "text": "Credentials saved but login failed. The nightly sync will retry — check your email and password."},
+                    ]
+                elif _rows == 0:
+                    st.session_state["_acct_flash"] = [
+                        {"type": "warning", "text": "Toast credentials saved but no data was returned. Verify your account has sales data in the selected date range."},
+                    ]
                 else:
-                    _rows = _res.get("toast", {}).get("rows", 0)
-                    if _rows:
-                        st.success(f"Toast connected — {_rows} rows imported.")
-                    else:
-                        st.warning("Credentials saved but no data was returned. Verify you have data in your Toast account.")
+                    st.session_state["_acct_flash"] = [
+                        {"type": "success", "text": f"Toast connected — {_rows} rows imported."},
+                    ]
                 st.session_state["user"] = db.get_user(username)
                 st.rerun()
 
@@ -285,16 +303,21 @@ with st.container(border=True):
                 st.session_state["user"] = user
                 with st.spinner("Credentials saved — attempting to sync Paychex data…"):
                     _res = _sync_all(db.get_user(username))
-                _err = _res.get("paychex", {}).get("error")
+                _err  = _res.get("paychex", {}).get("error")
+                _rows = _res.get("paychex", {}).get("rows", 0)
                 if _err:
-                    st.error(f"Paychex sync failed: {_err}")
-                    st.warning("Credentials saved but no data was imported. The nightly sync will retry automatically.")
+                    st.session_state["_acct_flash"] = [
+                        {"type": "error",   "text": f"Paychex sync failed: {_err}"},
+                        {"type": "warning", "text": "Credentials saved but login failed. The nightly sync will retry — check your username and password."},
+                    ]
+                elif _rows == 0:
+                    st.session_state["_acct_flash"] = [
+                        {"type": "warning", "text": "Paychex credentials saved but no data was returned. Verify your account has payroll data in the selected date range."},
+                    ]
                 else:
-                    _rows = _res.get("paychex", {}).get("rows", 0)
-                    if _rows:
-                        st.success(f"Paychex connected — {_rows} rows imported.")
-                    else:
-                        st.warning("Credentials saved but no data was returned. Verify you have data in your Paychex account.")
+                    st.session_state["_acct_flash"] = [
+                        {"type": "success", "text": f"Paychex connected — {_rows} rows imported."},
+                    ]
                 st.session_state["user"] = db.get_user(username)
                 st.rerun()
 

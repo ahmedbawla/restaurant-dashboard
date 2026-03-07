@@ -101,8 +101,8 @@ with st.sidebar:
         not user.get("use_simulated_data") and
         (_has_toast_scraper_creds(user) or _has_paychex_scraper_creds(user))
     )
-    last_sync    = user.get("last_sync_at")
-    last_status  = user.get("last_sync_status") or ""
+    last_sync   = user.get("last_sync_at")
+    last_status = user.get("last_sync_status") or ""
 
     if last_sync:
         st.caption(f"Last sync: {str(last_sync)[:16]} UTC")
@@ -112,25 +112,34 @@ with st.sidebar:
         st.caption("No data synced yet.")
 
     if _uses_scraper:
-        st.info("Portal sync runs nightly at 6 AM UTC via GitHub Actions.")
-    else:
-        if st.button("Sync Now", use_container_width=True, key="sidebar_sync"):
-            with st.spinner("Syncing…"):
-                _res = sync_all(user)
-            _errs = {s: r["error"] for s, r in _res.items() if r["error"]}
-            if _errs:
-                for _s, _e in _errs.items():
-                    st.error(f"{_s}: {_e}")
-            else:
-                st.success(f"Synced {sum(r['rows'] for r in _res.values())} rows.")
-            st.session_state["user"] = db.get_user(username)
-            st.rerun()
+        st.caption("Portal sync (Toast/Paychex) runs nightly via GitHub Actions.")
+
+    # Sync Now is always available — errors surface as messages
+    if st.button("Sync Now", use_container_width=True, key="sidebar_sync"):
+        with st.spinner("Syncing…"):
+            _res = sync_all(user)
+        _msgs = []
+        for _s, _r in _res.items():
+            if _r["error"]:
+                _msgs.append({"type": "error",   "text": f"{_s}: {_r['error']}"})
+            elif _r["rows"] == 0:
+                _msgs.append({"type": "warning", "text": f"{_s}: sync succeeded but returned 0 rows."})
+        if not _msgs:
+            _msgs.append({"type": "success", "text": f"Synced {sum(r['rows'] for r in _res.values())} rows."})
+        st.session_state["_sync_flash"] = _msgs
+        st.session_state["user"] = db.get_user(username)
+        st.rerun()
 
     if st.button("Load Demo Data", use_container_width=True, key="sidebar_demo"):
         with st.spinner("Loading demo data…"):
             sync_simulated(user)
+        st.session_state["_sync_flash"] = [{"type": "success", "text": "Demo data loaded."}]
         st.session_state["user"] = db.get_user(username)
         st.rerun()
+
+    # Display any flash messages from previous sync/demo action
+    for _msg in st.session_state.pop("_sync_flash", []):
+        getattr(st, _msg["type"])(_msg["text"])
 
 # ── Navigation ────────────────────────────────────────────────────────────────
 pg = st.navigation([
