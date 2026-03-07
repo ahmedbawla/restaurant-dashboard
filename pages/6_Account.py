@@ -41,6 +41,7 @@ if st.session_state.pop("qb_just_connected", False):
             {"type": "success", "text": f"QuickBooks connected and synced {_qb_rows} rows."},
         ]
     st.session_state["user"] = db.get_user(username)
+    st.cache_data.clear()
     st.rerun()
 
 if "oauth_error" in st.session_state:
@@ -142,7 +143,8 @@ with st.container(border=True):
                     db.update_user(username, use_simulated_data=True)
                     user["use_simulated_data"] = True
                 st.session_state["user"] = user
-                st.rerun()
+                st.cache_data.clear()
+    st.rerun()
         else:
             if not qb_secrets_configured():
                 st.info("App credentials not configured in secrets.toml.")
@@ -190,7 +192,8 @@ with st.container(border=True):
                     db.update_user(username, use_simulated_data=True)
                     user["use_simulated_data"] = True
                 st.session_state["user"] = user
-                st.rerun()
+                st.cache_data.clear()
+    st.rerun()
 
     if not toast_connected:
         with st.form("toast_connect_form"):
@@ -239,7 +242,8 @@ with st.container(border=True):
                         {"type": "success", "text": f"Toast connected — {_rows} rows imported."},
                     ]
                 st.session_state["user"] = db.get_user(username)
-                st.rerun()
+                st.cache_data.clear()
+    st.rerun()
 
 # ── Paychex Flex ──────────────────────────────────────────────────────────────
 with st.container(border=True):
@@ -270,7 +274,8 @@ with st.container(border=True):
                     db.update_user(username, use_simulated_data=True)
                     user["use_simulated_data"] = True
                 st.session_state["user"] = user
-                st.rerun()
+                st.cache_data.clear()
+    st.rerun()
 
     if not px_connected:
         with st.form("paychex_connect_form"):
@@ -319,7 +324,8 @@ with st.container(border=True):
                         {"type": "success", "text": f"Paychex connected — {_rows} rows imported."},
                     ]
                 st.session_state["user"] = db.get_user(username)
-                st.rerun()
+                st.cache_data.clear()
+    st.rerun()
 
 st.caption(
     "After connecting, click **Sync Now** on the Summary page or wait for the "
