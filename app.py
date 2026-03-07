@@ -15,6 +15,8 @@ import streamlit as st
 from auth import require_auth, render_sidebar_logout, seed_test_user
 from components.theme import apply_professional_theme
 from data import database as db
+from data.loader import _has_toast_scraper_creds, _has_paychex_scraper_creds
+from data.sync import sync_all, sync_simulated
 
 # ── Page config (must be first Streamlit call) ────────────────────────────────
 st.set_page_config(
@@ -95,9 +97,6 @@ with st.sidebar:
 
     # ── Data controls ─────────────────────────────────────────────────────────
     st.divider()
-    from data.loader import _has_toast_scraper_creds, _has_paychex_scraper_creds
-    from data.sync import sync_all, sync_simulated
-
     _uses_scraper = (
         not user.get("use_simulated_data") and
         (_has_toast_scraper_creds(user) or _has_paychex_scraper_creds(user))
