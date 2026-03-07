@@ -137,13 +137,14 @@ with st.sidebar:
         st.cache_data.clear()
         st.rerun()
 
-    if st.button("Load Demo Data", use_container_width=True, key="sidebar_demo"):
-        with st.spinner("Loading demo data…"):
-            sync_simulated(user)
-        st.session_state["_sync_flash"] = [{"type": "success", "text": "Demo data loaded."}]
-        st.session_state["user"] = db.get_user(username)
-        st.cache_data.clear()
-        st.rerun()
+    if username == "test":
+        if st.button("Load Demo Data", use_container_width=True, key="sidebar_demo"):
+            with st.spinner("Loading demo data…"):
+                sync_simulated(user)
+            st.session_state["_sync_flash"] = [{"type": "success", "text": "Demo data loaded."}]
+            st.session_state["user"] = db.get_user(username)
+            st.cache_data.clear()
+            st.rerun()
 
     # Display any flash messages from previous sync/demo action
     for _msg in st.session_state.pop("_sync_flash", []):
