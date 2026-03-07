@@ -87,15 +87,16 @@ st.divider()
 # ── Integrations ──────────────────────────────────────────────────────────────
 st.subheader("Integrations")
 
-qb_connected    = bool(user.get("qb_realm_id") and user.get("qb_refresh_token"))
-toast_connected = bool(
-    (user.get("toast_api_key") and user.get("toast_client_secret") and user.get("toast_guid")) or
-    (user.get("toast_username") and user.get("toast_password_enc"))
-)
-px_connected = bool(
-    (user.get("paychex_client_id") and user.get("paychex_client_secret") and user.get("paychex_company_id")) or
-    (user.get("paychex_username") and user.get("paychex_password_enc"))
-)
+qb_connected = bool(user.get("qb_realm_id") and user.get("qb_refresh_token"))
+
+# API keys = verified (server-to-server); portal credentials = saved but unverified until first sync
+toast_has_api_creds    = bool(user.get("toast_api_key") and user.get("toast_client_secret") and user.get("toast_guid"))
+toast_has_portal_creds = bool(user.get("toast_username") and user.get("toast_password_enc"))
+toast_connected        = toast_has_api_creds or toast_has_portal_creds
+
+px_has_api_creds    = bool(user.get("paychex_client_id") and user.get("paychex_client_secret") and user.get("paychex_company_id"))
+px_has_portal_creds = bool(user.get("paychex_username") and user.get("paychex_password_enc"))
+px_connected        = px_has_api_creds or px_has_portal_creds
 
 # ── QuickBooks Online ─────────────────────────────────────────────────────────
 with st.container(border=True):
@@ -143,9 +144,10 @@ with st.container(border=True):
         st.markdown("**Toast POS**")
         st.caption("Sales & Labor")
     with col_status:
-        if toast_connected:
-            label = user.get("toast_username") or user.get("toast_guid") or "Connected"
-            st.success(f"Connected — {label}")
+        if toast_has_api_creds:
+            st.success(f"Connected — {user.get('toast_guid')}")
+        elif toast_has_portal_creds:
+            st.info(f"Credentials saved — {user.get('toast_username')}  ·  Not yet verified (syncs nightly)")
         else:
             st.warning("Not connected")
     with col_action:
@@ -194,7 +196,7 @@ with st.container(border=True):
                     "use_simulated_data": False,
                 })
                 st.session_state["user"] = user
-                st.success("Toast POS credentials saved. Data will sync tonight at 6 AM.")
+                st.info("Toast credentials saved. They will be verified and data pulled at the next scheduled sync (nightly 6 AM). If the login fails, you will remain on simulated data.")
                 st.rerun()
 
 # ── Paychex Flex ──────────────────────────────────────────────────────────────
@@ -204,9 +206,10 @@ with st.container(border=True):
         st.markdown("**Paychex Flex**")
         st.caption("Payroll & Labor")
     with col_status:
-        if px_connected:
-            label = user.get("paychex_username") or user.get("paychex_company_id") or "Connected"
-            st.success(f"Connected — {label}")
+        if px_has_api_creds:
+            st.success(f"Connected — {user.get('paychex_company_id')}")
+        elif px_has_portal_creds:
+            st.info(f"Credentials saved — {user.get('paychex_username')}  ·  Not yet verified (syncs nightly)")
         else:
             st.warning("Not connected")
     with col_action:
@@ -255,7 +258,7 @@ with st.container(border=True):
                     "use_simulated_data":   False,
                 })
                 st.session_state["user"] = user
-                st.success("Paychex credentials saved. Data will sync tonight at 6 AM.")
+                st.info("Paychex credentials saved. They will be verified and data pulled at the next scheduled sync (nightly 6 AM). If the login fails, you will remain on simulated data.")
                 st.rerun()
 
 st.caption(
