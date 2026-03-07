@@ -26,9 +26,9 @@ def seed_test_user() -> None:
             restaurant_name="The Brass Fork (Demo)",
             use_simulated_data=False,
         )
-    elif existing.get("last_sync_status") not in ("demo",):
-        # Wipe any stale auto-synced simulated data from before this fix.
-        # Preserve data only if the user explicitly loaded demo data.
+    else:
+        # Always clear the test account's data on startup.
+        # It's a shared demo account — demo data is reloaded on demand.
         db.clear_user_data("test")
 
 
