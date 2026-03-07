@@ -82,15 +82,38 @@ else:
     hs_status, hs_label = "good", "All Systems Healthy"
 
 st.markdown(
-    f'<div style="margin:0.6rem 0 1.2rem 0">'
+    f'<div style="margin:0.6rem 0 0.5rem 0">'
     f'<span style="font-size:0.65rem;text-transform:uppercase;letter-spacing:2px;'
     f'color:rgba(212,168,75,0.7);font-weight:700;">Business Health</span>&nbsp;&nbsp;'
     f'{health_badge(hs_label, hs_status)}</div>',
     unsafe_allow_html=True,
 )
 
+if alerts or warnings:
+    _advice = {
+        "Prime Cost %":  "Prime cost = food + labour combined. Reduce by renegotiating supplier prices, cutting waste, or aligning staff hours with peak trading windows.",
+        "Food Cost %":   "Cost of goods as a % of revenue. Review supplier invoices, portion sizes, and wastage logs.",
+        "Labour Cost %": "Labour as a % of revenue. Adjust shift schedules to better match your busy and quiet periods.",
+    }
+    _issues = []
+    for _name, _val, _tgt, _wrn in [
+        ("Prime Cost %",  prime,    prime_t, prime_w),
+        ("Food Cost %",   food_pct, food_t,  food_w),
+        ("Labour Cost %", labor,    labor_t, labor_w),
+    ]:
+        if _val > _tgt:
+            _issues.append((_name, _val, _tgt, _wrn, _val > _wrn))
+    with st.expander("View issues →", expanded=True):
+        for _name, _val, _tgt, _wrn, _is_alert in _issues:
+            (_fn := st.error if _is_alert else st.warning)(
+                f"**{_name}: {_val:.1f}%** — "
+                f"{'above alert threshold' if _is_alert else 'above target'} "
+                f"(target ≤{_tgt:.0f}%, alert >{_wrn:.0f}%)  \n"
+                f"{_advice[_name]}"
+            )
+
 # ── Most-recent-day KPI strip ──────────────────────────────────────────────────
-section_header(f"Most Recent Day — {kpi['date']}")
+section_header(f"Most Recent Day — {kpi['date']}", help="KPIs for the most recent date in your dataset. Prime Cost = Food Cost % + Labour Cost %.")
 c1, c2, c3, c4, c5, c6 = st.columns(6)
 with c1:
     st.metric("Daily Revenue",    format_currency(kpi["revenue"]),
@@ -117,7 +140,7 @@ with c6:
 st.divider()
 
 # ── Period summary strip ───────────────────────────────────────────────────────
-section_header("Period Summary")
+section_header("Period Summary", help="Totals and averages across the entire selected date range. Deltas compare the second half of the period against the first half.")
 s1, s2, s3, s4, s5 = st.columns(5)
 total_rev = daily_sales["revenue"].sum()
 with s1:
@@ -137,13 +160,13 @@ with s5:
 st.divider()
 
 # ── Revenue trend ─────────────────────────────────────────────────────────────
-section_header("Revenue Trend")
+section_header("Revenue Trend", help="Daily revenue over the selected period. The dotted line is a 7-day rolling average that smooths out day-to-day noise.")
 st.plotly_chart(revenue_trend(daily_sales, days=len(daily_sales)), use_container_width=True)
 
 st.divider()
 
 # ── Day-of-week & spend-per-head ──────────────────────────────────────────────
-section_header("Traffic & Spend Analysis")
+section_header("Traffic & Spend Analysis", help="Left: average revenue by day of week — shows your busiest and slowest days. Right: revenue per guest transaction over time.")
 col_dow, col_sph = st.columns(2)
 with col_dow:
     st.plotly_chart(revenue_by_dow(daily_sales), use_container_width=True)
@@ -153,7 +176,7 @@ with col_sph:
 st.divider()
 
 # ── Best / worst days ─────────────────────────────────────────────────────────
-section_header("Performance Extremes")
+section_header("Performance Extremes", help="Your best and worst revenue days in the period, plus overall averages and the day with the highest average check size.")
 t1, t2, t3, t4 = st.columns(4)
 peak = daily_sales.loc[daily_sales["revenue"].idxmax()]
 low  = daily_sales.loc[daily_sales["revenue"].idxmin()]

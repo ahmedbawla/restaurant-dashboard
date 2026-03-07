@@ -76,7 +76,7 @@ if not ot_employees.empty:
     )
 
 # ── KPI strip ─────────────────────────────────────────────────────────────────
-section_header("Labour Overview")
+section_header("Labour Overview", help="Labour cost metrics for the most recent day and the full selected period. Rev per Labour Hour = revenue ÷ total hours worked.")
 k1, k2, k3, k4, k5 = st.columns(5)
 with k1:
     st.metric("Labor % (Latest Day)", f"{labor_pct:.1f}%",
@@ -96,7 +96,7 @@ with k5:
 st.divider()
 
 # ── Gauge + Dept hours/pay ────────────────────────────────────────────────────
-section_header("Cost Gauges")
+section_header("Cost Gauges", help="Left: labour cost % gauge showing where you sit relative to your target and warning thresholds. Right: total hours worked by department for the selected week.")
 col1, col2 = st.columns([1, 2])
 with col1:
     st.plotly_chart(
@@ -109,7 +109,7 @@ with col2:
 st.divider()
 
 # ── Labor % by department ─────────────────────────────────────────────────────
-section_header("Labor Cost % by Department")
+section_header("Labor Cost % by Department", help="Left: labour cost as a % of revenue for each department — highlights which teams are over or under their share. Right: daily labour % trend overlaid on revenue bars.")
 col_dept, col_trend = st.columns(2)
 with col_dept:
     st.plotly_chart(labor_pct_by_dept(weekly_payroll, daily_sales), use_container_width=True)
@@ -119,7 +119,7 @@ with col_trend:
 st.divider()
 
 # ── Overtime alerts ───────────────────────────────────────────────────────────
-section_header("Overtime Alerts")
+section_header("Overtime Alerts", help="Employees who logged overtime in the selected week. Overtime hours are paid at 1.5× the regular rate, which increases labour cost.")
 if ot_employees.empty:
     st.success(f"No employees exceeded {OT_THRESHOLD} hours during the selected week.")
 else:
@@ -133,7 +133,7 @@ else:
 
 # ── Payroll detail ────────────────────────────────────────────────────────────
 st.divider()
-section_header(f"Payroll Detail — Week of {selected_week}")
+section_header(f"Payroll Detail — Week of {selected_week}", help="Full payroll breakdown per employee: regular hours, overtime hours, employment type, and gross pay for the selected week.")
 pd_ = week_data[["employee_name","dept","role","employment_type","regular_hours",
                   "overtime_hours","total_hours","gross_pay"]].copy()
 pd_["gross_pay"]      = pd_["gross_pay"].apply(lambda x: f"${x:,.2f}")

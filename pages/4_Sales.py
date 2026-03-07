@@ -50,7 +50,7 @@ total_covers = daily_sales["covers"].sum()
 best_idx     = daily_sales["revenue"].idxmax()
 
 # ── KPI strip ─────────────────────────────────────────────────────────────────
-section_header("Period KPIs")
+section_header("Period KPIs", help="Key revenue and guest metrics for the selected date range. Deltas compare the second half of the period against the first half.")
 k1, k2, k3, k4, k5 = st.columns(5)
 with k1:
     st.metric("Total Revenue",       format_currency(total_rev), delta=rev_delta)
@@ -69,13 +69,13 @@ with k5:
 st.divider()
 
 # ── Revenue trend with 7-day rolling avg ─────────────────────────────────────
-section_header("Revenue Trend")
+section_header("Revenue Trend", help="Daily revenue over the selected period with a 7-day rolling average overlay to show the underlying trend.")
 st.plotly_chart(revenue_trend(daily_sales, days=len(daily_sales)), use_container_width=True)
 
 st.divider()
 
 # ── Peak hours heatmap ────────────────────────────────────────────────────────
-section_header("Peak Hours Heatmap")
+section_header("Peak Hours Heatmap", help="Average revenue by hour of day and day of week. Darker cells = higher revenue. Use this to plan staffing and identify under-performing slots.")
 if not hourly_sales.empty:
     st.plotly_chart(hourly_heatmap(hourly_sales), use_container_width=True)
 else:
@@ -84,7 +84,7 @@ else:
 st.divider()
 
 # ── Day-of-week & spend-per-head ──────────────────────────────────────────────
-section_header("Traffic Patterns")
+section_header("Traffic Patterns", help="Left: average revenue by day of week — shows your most and least profitable days. Right: average guest covers by day of week.")
 col_a, col_b = st.columns(2)
 with col_a:
     st.plotly_chart(revenue_by_dow(daily_sales), use_container_width=True)
@@ -94,7 +94,7 @@ with col_b:
 st.divider()
 
 # ── Check size & spend per head trends ───────────────────────────────────────
-section_header("Spend Trends")
+section_header("Spend Trends", help="Left: average check size per day over time — a rising trend means guests are spending more per visit. Right: revenue per guest cover.")
 col_c, col_d = st.columns(2)
 with col_c:
     st.plotly_chart(avg_check_trend(daily_sales), use_container_width=True)
@@ -105,7 +105,7 @@ st.divider()
 
 # ── Top menu items ────────────────────────────────────────────────────────────
 if not menu_items.empty:
-    section_header("Top-Performing Menu Items")
+    section_header("Top-Performing Menu Items", help="Left: top items by total revenue generated in the period. Right: top items by number of units sold.")
     col1, col2 = st.columns(2)
     with col1:
         st.plotly_chart(top_items_bar(menu_items, metric="total_revenue"), use_container_width=True)
@@ -114,7 +114,7 @@ if not menu_items.empty:
     st.divider()
 
 # ── Daily detail table ────────────────────────────────────────────────────────
-section_header("Daily Sales Detail")
+section_header("Daily Sales Detail", help="Day-by-day breakdown of guest covers, revenue, average check size, food cost, and food cost %. Sorted most recent first.")
 table = daily_sales[["date","covers","revenue","avg_check","food_cost","food_cost_pct"]].copy()
 table["revenue"]       = table["revenue"].apply(lambda x: f"${x:,.0f}")
 table["avg_check"]     = table["avg_check"].apply(lambda x: f"${x:.2f}")

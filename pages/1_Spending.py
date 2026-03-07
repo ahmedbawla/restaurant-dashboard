@@ -50,7 +50,7 @@ spend_prior  = filtered_sorted.iloc[:mid]["amount"].sum()
 spend_delta  = f"{(spend_recent/spend_prior - 1)*100:+.1f}% vs prior period" if spend_prior else None
 
 # ── KPI strip ─────────────────────────────────────────────────────────────────
-section_header("Expense Overview")
+section_header("Expense Overview", help="Operating expenses from QuickBooks Online for the selected period. Delta compares the second half of the period to the first.")
 total_spend  = filtered["amount"].sum()
 daily_avg    = filtered.groupby(filtered["date"].dt.date)["amount"].sum().mean()
 top_cat      = filtered.groupby("category")["amount"].sum().idxmax()
@@ -75,7 +75,7 @@ with k5:
 st.divider()
 
 # ── Charts row ────────────────────────────────────────────────────────────────
-section_header("Breakdown")
+section_header("Breakdown", help="Left: each expense category as a share of total spend. Right: your top vendors by total amount paid in the period.")
 col1, col2 = st.columns(2)
 with col1:
     st.plotly_chart(expense_pie(filtered), use_container_width=True)
@@ -85,12 +85,12 @@ with col2:
 st.divider()
 
 # ── Weekly trend with rolling avg ─────────────────────────────────────────────
-section_header("Weekly Trend")
+section_header("Weekly Trend", help="Total spend per week. The dotted line is a 4-week rolling average to show the underlying trend.")
 st.plotly_chart(expense_trend_weekly(filtered), use_container_width=True)
 
 # ── Category breakdown table ──────────────────────────────────────────────────
 st.divider()
-section_header("Category Summary")
+section_header("Category Summary", help="Total spend, number of transactions, and average transaction size for each expense category in the selected period.")
 cat_summary = filtered.groupby("category")["amount"].agg(
     Total="sum", Count="count", Average="mean"
 ).reset_index().sort_values("Total", ascending=False)
@@ -101,7 +101,7 @@ st.dataframe(cat_summary, use_container_width=True, hide_index=True)
 
 # ── Transaction detail ────────────────────────────────────────────────────────
 st.divider()
-section_header("Transaction Detail")
+section_header("Transaction Detail", help="Individual expense line items from QuickBooks, sorted by most recent first. Use the Category filter in the sidebar to narrow results.")
 display = filtered.copy()
 display["date"]   = display["date"].dt.strftime("%Y-%m-%d")
 display["amount"] = display["amount"].apply(lambda x: f"${x:,.2f}")

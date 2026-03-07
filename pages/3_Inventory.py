@@ -61,7 +61,7 @@ elif variance > 2:
     )
 
 # ── KPI strip ─────────────────────────────────────────────────────────────────
-section_header("Cost Overview")
+section_header("Cost Overview", help="Food/beverage cost metrics for the selected period. Variance = actual food cost % minus the theoretical cost % based on menu item costs × quantities sold.")
 k1, k2, k3, k4, k5 = st.columns(5)
 with k1:
     st.metric("Avg. Food Cost %",
@@ -83,13 +83,13 @@ with k5:
 st.divider()
 
 # ── Food cost trend ───────────────────────────────────────────────────────────
-section_header("Food Cost % Trend")
+section_header("Food Cost % Trend", help="Daily food/beverage cost as a % of revenue. A rising trend may indicate waste, price increases from suppliers, or portioning issues.")
 st.plotly_chart(food_cost_trend(daily_sales), use_container_width=True)
 
 st.divider()
 
 # ── Menu Engineering Matrix ───────────────────────────────────────────────────
-section_header("Menu Engineering Matrix")
+section_header("Menu Engineering Matrix", help="Each item is plotted by popularity (units sold) and profitability (gross margin %). Stars = promote these. Plowhorses = high volume but low margin — consider price increase. Puzzles = high margin but low volume — improve visibility. Dogs = low on both — candidates for removal.")
 st.caption(
     "**Stars** = high margin + high popularity  ·  "
     "**Plowhorses** = high popularity, low margin  ·  "
@@ -101,7 +101,7 @@ st.plotly_chart(menu_engineering_quadrant(menu_items), use_container_width=True)
 st.divider()
 
 # ── Profitability scatter & top cost items ────────────────────────────────────
-section_header("Item-Level Profitability")
+section_header("Item-Level Profitability", help="Left: items with the highest total cost to produce — these drive your COGS the most. Right: items with the best gross margin % — your most profitable items per sale.")
 col1, col2 = st.columns(2)
 
 _LAYOUT_MINI = dict(
@@ -142,7 +142,7 @@ with st.sidebar:
 
 # ── Menu detail table ─────────────────────────────────────────────────────────
 st.divider()
-section_header("Menu Item Profitability Detail")
+section_header("Menu Item Profitability Detail", help="Full breakdown per menu item: unit price, unit cost, gross margin %, total quantity sold, and total revenue and profit generated in the period.")
 display = menu_items[menu_items["category"].isin(selected_cats)].copy()
 display["price"]         = display["price"].apply(lambda x: f"${x:.2f}")
 display["cost"]          = display["cost"].apply(lambda x: f"${x:.2f}")

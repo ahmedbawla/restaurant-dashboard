@@ -199,9 +199,15 @@ def page_header(title: str, subtitle: str = "", eyebrow: str = "Business Intelli
         st.markdown(f'<p class="report-subtitle">{subtitle}</p>', unsafe_allow_html=True)
 
 
-def section_header(label: str) -> None:
-    """Render a small uppercase section label above a group of content."""
-    st.markdown(f'<span class="section-label">{label}</span>', unsafe_allow_html=True)
+def section_header(label: str, help: str = None) -> None:
+    """Render a small uppercase section label. Pass help= for an ⓘ hover tooltip."""
+    icon = (
+        f'&nbsp;<span title="{help}" style="cursor:help;color:rgba(100,180,255,0.5);'
+        f'font-size:0.95rem;vertical-align:middle;font-weight:400;letter-spacing:0;'
+        f'text-transform:none;">ⓘ</span>'
+        if help else ""
+    )
+    st.markdown(f'<span class="section-label">{label}{icon}</span>', unsafe_allow_html=True)
 
 
 def health_badge(label: str, status: str) -> str:
