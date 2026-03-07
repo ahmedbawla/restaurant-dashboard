@@ -13,22 +13,18 @@ sys.path.insert(0, str(Path(__file__).parent))
 import streamlit as st
 
 from data import database as db
-from data.sync import sync_all
 
 
 def seed_test_user() -> None:
-    """Ensure the 'test' demo account exists and has data seeded."""
+    """Ensure the 'test' demo account exists (no data seeded — user loads demo data manually)."""
     if not db.get_user("test"):
         db.create_user(
             username="test",
             plain_password="test",
             email="ahmed.bawla@gmail.com",
             restaurant_name="The Brass Fork (Demo)",
-            use_simulated_data=True,
+            use_simulated_data=False,
         )
-    if not db.user_has_data("test"):
-        test_user = db.get_user("test")
-        sync_all(test_user)
 
 
 def require_auth() -> dict:
@@ -51,9 +47,13 @@ def render_sidebar_logout() -> None:
 
 
 def _show_auth_ui() -> None:
-    with st.sidebar:
-        st.markdown("**🍽️ Restaurant BI Dashboard**")
-        st.caption("Sign in to access your dashboard")
+    # Completely hide the sidebar before login
+    st.markdown("""
+    <style>
+    [data-testid="stSidebar"]        { display: none !important; }
+    [data-testid="collapsedControl"] { display: none !important; }
+    </style>
+    """, unsafe_allow_html=True)
 
     st.title("🍽️ Restaurant BI Dashboard")
     st.caption("Demo: username `test` / password `test`")
@@ -137,8 +137,6 @@ def _show_auth_ui() -> None:
                         qb_refresh_token=qb_refresh_token or None,
                     )
                     new_user = db.get_user(new_username)
-                    with st.spinner("Setting up your dashboard..."):
-                        sync_all(new_user)
                     st.session_state["user"] = dict(new_user)
                     st.rerun()
                 except ValueError as e:

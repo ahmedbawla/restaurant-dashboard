@@ -93,6 +93,46 @@ with st.sidebar:
         st.session_state["start_date"] = default_start.isoformat()
         st.session_state["end_date"]   = max_d.isoformat()
 
+    # ── Data controls ─────────────────────────────────────────────────────────
+    st.divider()
+    from data.loader import _has_toast_scraper_creds, _has_paychex_scraper_creds
+    from data.sync import sync_all, sync_simulated
+
+    _uses_scraper = (
+        not user.get("use_simulated_data") and
+        (_has_toast_scraper_creds(user) or _has_paychex_scraper_creds(user))
+    )
+    last_sync    = user.get("last_sync_at")
+    last_status  = user.get("last_sync_status") or ""
+
+    if last_sync:
+        st.caption(f"Last sync: {str(last_sync)[:16]} UTC")
+        if last_status not in ("ok", "demo"):
+            st.warning("Last sync had errors — check Account settings.")
+    else:
+        st.caption("No data synced yet.")
+
+    if _uses_scraper:
+        st.info("Portal sync runs nightly at 6 AM UTC via GitHub Actions.")
+    else:
+        if st.button("Sync Now", use_container_width=True, key="sidebar_sync"):
+            with st.spinner("Syncing…"):
+                _res = sync_all(user)
+            _errs = {s: r["error"] for s, r in _res.items() if r["error"]}
+            if _errs:
+                for _s, _e in _errs.items():
+                    st.error(f"{_s}: {_e}")
+            else:
+                st.success(f"Synced {sum(r['rows'] for r in _res.values())} rows.")
+            st.session_state["user"] = db.get_user(username)
+            st.rerun()
+
+    if st.button("Load Demo Data", use_container_width=True, key="sidebar_demo"):
+        with st.spinner("Loading demo data…"):
+            sync_simulated(user)
+        st.session_state["user"] = db.get_user(username)
+        st.rerun()
+
 # ── Navigation ────────────────────────────────────────────────────────────────
 pg = st.navigation([
     st.Page("pages/summary.py",      title="Summary",          icon="🏠"),

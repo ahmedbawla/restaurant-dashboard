@@ -110,6 +110,55 @@ def sync_all(user: dict, days_back: int = 90) -> dict:
     return results
 
 
+def sync_simulated(user: dict, days_back: int = 90) -> dict:
+    """
+    Force-load simulated (demo) data for a user, ignoring any real credentials.
+    Used by the 'Load Demo Data' button so the app owner can demonstrate the
+    product to prospective clients.
+    """
+    from data.simulated.toast_simulated import (
+        get_sales, get_hourly_sales, get_menu_item_sales,
+    )
+    from data.simulated.paychex_simulated import get_labor, get_payroll
+    from data.simulated.quickbooks_simulated import get_expenses, get_cash_flow
+
+    username = user["username"]
+    init_db()
+    end_date   = date.today()
+    start_date = end_date - timedelta(days=days_back)
+    results    = {}
+
+    try:
+        rows  = 0
+        rows += upsert_df(get_sales(start_date, end_date),           "daily_sales",    username)
+        rows += upsert_df(get_hourly_sales(start_date, end_date),    "hourly_sales",   username)
+        rows += upsert_df(get_menu_item_sales(start_date, end_date), "menu_items",     username)
+        results["toast"] = {"rows": rows, "error": None}
+    except Exception as exc:
+        results["toast"] = {"rows": 0, "error": str(exc)}
+
+    try:
+        rows  = 0
+        rows += upsert_df(get_labor(start_date, end_date),   "daily_labor",    username)
+        rows += upsert_df(get_payroll(start_date, end_date), "weekly_payroll", username)
+        results["paychex"] = {"rows": rows, "error": None}
+    except Exception as exc:
+        results["paychex"] = {"rows": 0, "error": str(exc)}
+
+    try:
+        rows  = 0
+        rows += upsert_df(get_expenses(start_date, end_date),  "expenses",  username)
+        rows += upsert_df(get_cash_flow(start_date, end_date), "cash_flow", username)
+        results["quickbooks"] = {"rows": rows, "error": None}
+    except Exception as exc:
+        results["quickbooks"] = {"rows": 0, "error": str(exc)}
+
+    update_user(username,
+                last_sync_at=datetime.now(timezone.utc),
+                last_sync_status="demo")
+    return results
+
+
 def get_all_users() -> list[dict]:
     """Return all users who have real credentials (not simulated-only)."""
     from sqlalchemy import create_engine, text as _text

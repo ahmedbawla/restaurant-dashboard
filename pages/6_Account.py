@@ -22,7 +22,18 @@ username = user["username"]
 
 # ── Surface any OAuth result messages ────────────────────────────────────────
 if st.session_state.pop("qb_just_connected", False):
-    st.success("QuickBooks connected successfully. Your data will sync shortly.")
+    from data.sync import sync_all as _sync_all
+    with st.spinner("QuickBooks connected — syncing your data now…"):
+        _qb_res = _sync_all(user)
+    _qb_err = _qb_res.get("quickbooks", {}).get("error")
+    if _qb_err:
+        st.error(f"QuickBooks sync failed: {_qb_err}")
+        st.warning("Your QuickBooks connection was saved but no data could be imported. Check your QB permissions.")
+    else:
+        _rows = _qb_res.get("quickbooks", {}).get("rows", 0)
+        st.success(f"QuickBooks connected and synced {_rows} rows.")
+    st.session_state["user"] = db.get_user(username)
+    user = st.session_state["user"]
 if "oauth_error" in st.session_state:
     st.error(st.session_state.pop("oauth_error"))
 
@@ -184,6 +195,7 @@ with st.container(border=True):
                 st.error("Email and password are required.")
             else:
                 from utils.encryption import encrypt
+                from data.sync import sync_all as _sync_all
                 db.update_user(
                     username,
                     toast_username=t_email.strip(),
@@ -196,7 +208,19 @@ with st.container(border=True):
                     "use_simulated_data": False,
                 })
                 st.session_state["user"] = user
-                st.info("Toast credentials saved. They will be verified and data pulled at the next scheduled sync (nightly 6 AM). If the login fails, you will remain on simulated data.")
+                with st.spinner("Credentials saved — attempting to sync Toast data…"):
+                    _res = _sync_all(db.get_user(username))
+                _err = _res.get("toast", {}).get("error")
+                if _err:
+                    st.error(f"Toast sync failed: {_err}")
+                    st.warning("Credentials saved but no data was imported. The nightly sync will retry automatically.")
+                else:
+                    _rows = _res.get("toast", {}).get("rows", 0)
+                    if _rows:
+                        st.success(f"Toast connected — {_rows} rows imported.")
+                    else:
+                        st.warning("Credentials saved but no data was returned. Verify you have data in your Toast account.")
+                st.session_state["user"] = db.get_user(username)
                 st.rerun()
 
 # ── Paychex Flex ──────────────────────────────────────────────────────────────
@@ -246,6 +270,7 @@ with st.container(border=True):
                 st.error("Username and password are required.")
             else:
                 from utils.encryption import encrypt
+                from data.sync import sync_all as _sync_all
                 db.update_user(
                     username,
                     paychex_username=p_user.strip(),
@@ -258,7 +283,19 @@ with st.container(border=True):
                     "use_simulated_data":   False,
                 })
                 st.session_state["user"] = user
-                st.info("Paychex credentials saved. They will be verified and data pulled at the next scheduled sync (nightly 6 AM). If the login fails, you will remain on simulated data.")
+                with st.spinner("Credentials saved — attempting to sync Paychex data…"):
+                    _res = _sync_all(db.get_user(username))
+                _err = _res.get("paychex", {}).get("error")
+                if _err:
+                    st.error(f"Paychex sync failed: {_err}")
+                    st.warning("Credentials saved but no data was imported. The nightly sync will retry automatically.")
+                else:
+                    _rows = _res.get("paychex", {}).get("rows", 0)
+                    if _rows:
+                        st.success(f"Paychex connected — {_rows} rows imported.")
+                    else:
+                        st.warning("Credentials saved but no data was returned. Verify you have data in your Paychex account.")
+                st.session_state["user"] = db.get_user(username)
                 st.rerun()
 
 st.caption(
