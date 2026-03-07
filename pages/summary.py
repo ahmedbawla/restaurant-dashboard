@@ -11,6 +11,7 @@ from components.kpi_card import format_currency, format_pct, threshold_badge
 from components.charts import revenue_trend, revenue_by_dow, revenue_per_cover_trend
 from components.theme import page_header, section_header, health_badge
 from data import database as db
+from data.loader import _has_toast_scraper_creds, _has_paychex_scraper_creds
 
 with open(Path(__file__).parent.parent / "config.json") as f:
     CONFIG = json.load(f)
@@ -30,6 +31,45 @@ page_header(
     ),
     eyebrow="Shareholder Overview",
 )
+
+# ── Sync Now panel ────────────────────────────────────────────────────────────
+_uses_scraper = (
+    not user.get("use_simulated_data") and
+    (_has_toast_scraper_creds(user) or _has_paychex_scraper_creds(user))
+)
+
+with st.sidebar:
+    st.divider()
+    last_sync = user.get("last_sync_at")
+    last_status = user.get("last_sync_status") or ""
+    if last_sync:
+        st.caption(f"Last sync: {str(last_sync)[:16]} UTC")
+        if last_status and last_status != "ok":
+            st.warning(f"Last sync had errors — check Account settings.")
+        else:
+            st.caption("Status: OK")
+    else:
+        st.caption("Never synced from live sources.")
+
+    if _uses_scraper:
+        st.info(
+            "Portal sync (Toast / Paychex login) runs automatically via "
+            "GitHub Actions nightly at 6 AM UTC. It cannot run in the browser."
+        )
+    else:
+        if st.button("Sync Now", use_container_width=True):
+            from data.sync import sync_all
+            with st.spinner("Syncing data…"):
+                _results = sync_all(user)
+            _errors = {s: r["error"] for s, r in _results.items() if r["error"]}
+            if _errors:
+                for src, err in _errors.items():
+                    st.error(f"{src}: {err}")
+            else:
+                total = sum(r["rows"] for r in _results.values())
+                st.success(f"Sync complete — {total} rows updated.")
+            st.session_state["user"] = db.get_user(username)
+            st.rerun()
 
 # ── Load data ─────────────────────────────────────────────────────────────────
 kpi         = db.get_kpi_today(username, as_of_date=end_date)

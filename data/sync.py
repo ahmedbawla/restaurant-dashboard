@@ -6,66 +6,108 @@ Usage:
 """
 
 import sys
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 _PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(_PROJECT_ROOT))
 
-from data.database import init_db, upsert_df, get_user
+from data.database import init_db, upsert_df, get_user, update_user
 from data.loader import get_connector
 
 
-def sync_all(user: dict, days_back: int = 90) -> None:
+def sync_all(user: dict, days_back: int = 90) -> dict:
+    """
+    Sync all data sources for a user.
+
+    Returns a results dict:
+      {
+        "toast":     {"rows": int, "error": str | None},
+        "paychex":   {"rows": int, "error": str | None},
+        "quickbooks":{"rows": int, "error": str | None},
+      }
+    Always records last_sync_at and last_sync_status back to the database.
+    """
     username = user["username"]
     print(f"[sync] Initializing database for user '{username}'...")
     init_db()
 
-    end_date = date.today()
+    end_date   = date.today()
     start_date = end_date - timedelta(days=days_back)
     print(f"[sync] Date range: {start_date} to {end_date}")
 
+    results = {}
+
     # ---- Toast POS ----
     print("[sync] Fetching Toast POS data...")
-    toast = get_connector("toast", user)
+    try:
+        toast = get_connector("toast", user)
+        rows = 0
+        sales = toast["get_sales"](start_date, end_date)
+        upsert_df(sales, "daily_sales", username)
+        rows += len(sales)
 
-    sales = toast["get_sales"](start_date, end_date)
-    upsert_df(sales, "daily_sales", username)
-    print(f"  daily_sales: {len(sales)} rows")
+        hourly = toast["get_hourly_sales"](start_date, end_date)
+        upsert_df(hourly, "hourly_sales", username)
+        rows += len(hourly)
 
-    hourly = toast["get_hourly_sales"](start_date, end_date)
-    upsert_df(hourly, "hourly_sales", username)
-    print(f"  hourly_sales: {len(hourly)} rows")
+        item_sales = toast["get_menu_item_sales"](start_date, end_date)
+        upsert_df(item_sales, "menu_items", username)
+        rows += len(item_sales)
 
-    item_sales = toast["get_menu_item_sales"](start_date, end_date)
-    upsert_df(item_sales, "menu_items", username)
-    print(f"  menu_items: {len(item_sales)} rows")
+        results["toast"] = {"rows": rows, "error": None}
+        print(f"  toast: {rows} rows total")
+    except Exception as exc:
+        results["toast"] = {"rows": 0, "error": str(exc)}
+        print(f"  toast ERROR: {exc}")
 
     # ---- Paychex Payroll ----
     print("[sync] Fetching Paychex payroll data...")
-    paychex = get_connector("paychex", user)
+    try:
+        paychex = get_connector("paychex", user)
+        rows = 0
+        labor = paychex["get_labor"](start_date, end_date)
+        upsert_df(labor, "daily_labor", username)
+        rows += len(labor)
 
-    labor = paychex["get_labor"](start_date, end_date)
-    upsert_df(labor, "daily_labor", username)
-    print(f"  daily_labor: {len(labor)} rows")
+        payroll = paychex["get_payroll"](start_date, end_date)
+        upsert_df(payroll, "weekly_payroll", username)
+        rows += len(payroll)
 
-    payroll = paychex["get_payroll"](start_date, end_date)
-    upsert_df(payroll, "weekly_payroll", username)
-    print(f"  weekly_payroll: {len(payroll)} rows")
+        results["paychex"] = {"rows": rows, "error": None}
+        print(f"  paychex: {rows} rows total")
+    except Exception as exc:
+        results["paychex"] = {"rows": 0, "error": str(exc)}
+        print(f"  paychex ERROR: {exc}")
 
     # ---- QuickBooks ----
     print("[sync] Fetching QuickBooks data...")
-    qb = get_connector("quickbooks", user)
+    try:
+        qb = get_connector("quickbooks", user)
+        rows = 0
+        expenses = qb["get_expenses"](start_date, end_date)
+        upsert_df(expenses, "expenses", username)
+        rows += len(expenses)
 
-    expenses = qb["get_expenses"](start_date, end_date)
-    upsert_df(expenses, "expenses", username)
-    print(f"  expenses: {len(expenses)} rows")
+        cash_flow = qb["get_cash_flow"](start_date, end_date)
+        upsert_df(cash_flow, "cash_flow", username)
+        rows += len(cash_flow)
 
-    cash_flow = qb["get_cash_flow"](start_date, end_date)
-    upsert_df(cash_flow, "cash_flow", username)
-    print(f"  cash_flow: {len(cash_flow)} rows")
+        results["quickbooks"] = {"rows": rows, "error": None}
+        print(f"  quickbooks: {rows} rows total")
+    except Exception as exc:
+        results["quickbooks"] = {"rows": 0, "error": str(exc)}
+        print(f"  quickbooks ERROR: {exc}")
 
-    print("[sync] Done.")
+    # ---- Record sync outcome ----
+    errors = [f"{src}: {r['error']}" for src, r in results.items() if r["error"]]
+    status = "errors: " + " | ".join(errors) if errors else "ok"
+    update_user(username,
+                last_sync_at=datetime.now(timezone.utc),
+                last_sync_status=status)
+
+    print(f"[sync] Done. Status: {status}")
+    return results
 
 
 def get_all_users() -> list[dict]:

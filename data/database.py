@@ -239,6 +239,16 @@ def init_db() -> None:
                 f"ALTER TABLE users ADD COLUMN IF NOT EXISTS {col} TEXT"
             ))
 
+    # Add sync tracking columns
+    with engine.begin() as conn:
+        conn.execute(text(
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS last_sync_at TIMESTAMPTZ"
+        ))
+    with engine.begin() as conn:
+        conn.execute(text(
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS last_sync_status TEXT"
+        ))
+
     # ── Step 3: Composite PKs (each in its own transaction) ───────────────────
     for tbl, pk_cols in _TABLE_PKS.items():
         try:
@@ -357,6 +367,7 @@ def update_user(username: str, **fields) -> None:
         "paychex_username", "paychex_password_enc",
         "qb_realm_id", "qb_refresh_token", "oauth_state",
         "use_simulated_data",
+        "last_sync_at", "last_sync_status",
     }
     updates = {k: v for k, v in fields.items() if k in allowed}
     if not updates:
