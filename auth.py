@@ -17,7 +17,8 @@ from data import database as db
 
 def seed_test_user() -> None:
     """Ensure the 'test' demo account exists (no data seeded — user loads demo data manually)."""
-    if not db.get_user("test"):
+    existing = db.get_user("test")
+    if not existing:
         db.create_user(
             username="test",
             plain_password="test",
@@ -25,6 +26,10 @@ def seed_test_user() -> None:
             restaurant_name="The Brass Fork (Demo)",
             use_simulated_data=False,
         )
+    elif existing.get("last_sync_status") not in ("demo",):
+        # Wipe any stale auto-synced simulated data from before this fix.
+        # Preserve data only if the user explicitly loaded demo data.
+        db.clear_user_data("test")
 
 
 def require_auth() -> dict:

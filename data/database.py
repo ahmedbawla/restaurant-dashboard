@@ -395,6 +395,17 @@ def user_has_data(username: str) -> bool:
 # Write helpers
 # ---------------------------------------------------------------------------
 
+def clear_user_data(username: str) -> None:
+    """Delete all business data rows for a user (leaves user account intact)."""
+    tables = ["daily_sales", "hourly_sales", "menu_items",
+              "daily_labor", "weekly_payroll", "expenses", "cash_flow"]
+    engine = get_engine()
+    with engine.begin() as conn:
+        for tbl in tables:
+            conn.execute(text(f"DELETE FROM {tbl} WHERE username = :u"), {"u": username})
+    update_user(username, last_sync_at=None, last_sync_status=None)
+
+
 def upsert_df(df: pd.DataFrame, table: str, username: str) -> int:
     """Delete user's existing rows then append new rows (full per-user refresh)."""
     df = df.copy()

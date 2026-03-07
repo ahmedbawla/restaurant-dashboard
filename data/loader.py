@@ -1,13 +1,8 @@
 """
-Connector factory.
+Connector factory — returns real connectors only.
 
-Rules:
-- If use_simulated_data=True → always return simulated connector (demo mode).
-- If use_simulated_data=False → use real connector IF the required credentials
-  exist for that source, otherwise fall back to simulated.
-
-This means a real user can connect QuickBooks without breaking Toast/Paychex
-(those will keep using simulated data until their own credentials are added).
+Raises ValueError if no credentials are configured for a source.
+Use sync_simulated() for demo/sample data — it bypasses this module entirely.
 """
 
 
@@ -41,14 +36,11 @@ def _has_qb_creds(user: dict) -> bool:
 
 def get_connector(source: str, user: dict):
     """
-    Returns the appropriate connector for `source` (toast / paychex / quickbooks).
-    Always returns a dict of callables so sync.py can use connector["method"](args).
+    Returns the real connector for `source` (toast / paychex / quickbooks).
+    Raises ValueError if no credentials are configured for that source.
     """
-    use_sim = user.get("use_simulated_data", True)
-
     if source == "toast":
-        if not use_sim and _has_toast_creds(user):
-            # API connector (developer portal credentials)
+        if _has_toast_creds(user):
             from data.connectors.toast_connector import ToastConnector
             conn = ToastConnector({
                 "client_id":       user["toast_api_key"],
@@ -61,8 +53,7 @@ def get_connector(source: str, user: dict):
                 "get_menu_items":      conn.get_menu_items,
                 "get_menu_item_sales": conn.get_menu_item_sales,
             }
-        if not use_sim and _has_toast_scraper_creds(user):
-            # Portal scraper (username + password login)
+        if _has_toast_scraper_creds(user):
             from data.scrapers.toast_scraper import ToastScraper
             from utils.encryption import decrypt
             scraper = ToastScraper({
@@ -75,19 +66,10 @@ def get_connector(source: str, user: dict):
                 "get_menu_items":      scraper.get_menu_items,
                 "get_menu_item_sales": scraper.get_menu_item_sales,
             }
-        from data.simulated.toast_simulated import (
-            get_sales, get_hourly_sales, get_menu_items, get_menu_item_sales,
-        )
-        return {
-            "get_sales":           get_sales,
-            "get_hourly_sales":    get_hourly_sales,
-            "get_menu_items":      get_menu_items,
-            "get_menu_item_sales": get_menu_item_sales,
-        }
+        raise ValueError("No Toast credentials configured.")
 
     elif source == "paychex":
-        if not use_sim and _has_paychex_creds(user):
-            # API connector (developer portal credentials)
+        if _has_paychex_creds(user):
             from data.connectors.paychex_connector import PaychexConnector
             conn = PaychexConnector({
                 "client_id":     user["paychex_client_id"],
@@ -99,8 +81,7 @@ def get_connector(source: str, user: dict):
                 "get_payroll":   conn.get_payroll,
                 "get_employees": conn.get_employees,
             }
-        if not use_sim and _has_paychex_scraper_creds(user):
-            # Portal scraper (username + password login)
+        if _has_paychex_scraper_creds(user):
             from data.scrapers.paychex_scraper import PaychexScraper
             from utils.encryption import decrypt
             scraper = PaychexScraper({
@@ -112,15 +93,10 @@ def get_connector(source: str, user: dict):
                 "get_payroll":   scraper.get_payroll,
                 "get_employees": scraper.get_employees,
             }
-        from data.simulated.paychex_simulated import get_labor, get_payroll, get_employees
-        return {
-            "get_labor":     get_labor,
-            "get_payroll":   get_payroll,
-            "get_employees": get_employees,
-        }
+        raise ValueError("No Paychex credentials configured.")
 
     elif source == "quickbooks":
-        if not use_sim and _has_qb_creds(user):
+        if _has_qb_creds(user):
             from data.connectors.quickbooks_connector import QuickBooksConnector
             conn = QuickBooksConnector({
                 "realm_id":      user["qb_realm_id"],
@@ -131,11 +107,7 @@ def get_connector(source: str, user: dict):
                 "get_expenses":  conn.get_expenses,
                 "get_cash_flow": conn.get_cash_flow,
             }
-        from data.simulated.quickbooks_simulated import get_expenses, get_cash_flow
-        return {
-            "get_expenses":  get_expenses,
-            "get_cash_flow": get_cash_flow,
-        }
+        raise ValueError("No QuickBooks credentials configured.")
 
     else:
         raise ValueError(f"Unknown source: {source}")

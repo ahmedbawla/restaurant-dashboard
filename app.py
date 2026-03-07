@@ -121,11 +121,17 @@ with st.sidebar:
         _msgs = []
         for _s, _r in _res.items():
             if _r["error"]:
-                _msgs.append({"type": "error",   "text": f"{_s}: {_r['error']}"})
+                if "No " in _r["error"] and "credentials configured" in _r["error"]:
+                    _msgs.append({"type": "info", "text": f"{_s}: not connected — go to Account Settings to add credentials."})
+                else:
+                    _msgs.append({"type": "error", "text": f"{_s}: {_r['error']}"})
             elif _r["rows"] == 0:
                 _msgs.append({"type": "warning", "text": f"{_s}: sync succeeded but returned 0 rows."})
-        if not _msgs:
-            _msgs.append({"type": "success", "text": f"Synced {sum(r['rows'] for r in _res.values())} rows."})
+        real_rows = sum(r["rows"] for r in _res.values())
+        if all(r["error"] and "credentials configured" in (r["error"] or "") for r in _res.values()):
+            _msgs = [{"type": "info", "text": "No integrations connected. Go to Account Settings to connect Toast, Paychex, or QuickBooks — or use Load Demo Data to preview the dashboard."}]
+        elif not any(r["error"] for r in _res.values()):
+            _msgs.append({"type": "success", "text": f"Synced {real_rows} rows."})
         st.session_state["_sync_flash"] = _msgs
         st.session_state["user"] = db.get_user(username)
         st.rerun()
