@@ -25,7 +25,7 @@ if st.session_state.pop("qb_just_connected", False):
     from data.sync import sync_all as _sync_all
     with st.spinner("QuickBooks connected — syncing your data now…"):
         _qb_res = _sync_all(db.get_user(username))
-    _qb_err = _qb_res.get("quickbooks", {}).get("error")
+    _qb_err  = _qb_res.get("quickbooks", {}).get("error")
     _qb_rows = _qb_res.get("quickbooks", {}).get("rows", 0)
     if _qb_err:
         st.session_state["_acct_flash"] = [
@@ -114,7 +114,6 @@ st.subheader("Integrations")
 
 qb_connected = bool(user.get("qb_realm_id") and user.get("qb_refresh_token"))
 
-# API keys = verified (server-to-server); portal credentials = saved but unverified until first sync
 toast_has_api_creds    = bool(user.get("toast_api_key") and user.get("toast_client_secret") and user.get("toast_guid"))
 toast_has_portal_creds = bool(user.get("toast_username") and user.get("toast_password_enc"))
 toast_connected        = toast_has_api_creds or toast_has_portal_creds
@@ -144,7 +143,7 @@ with st.container(border=True):
                     user["use_simulated_data"] = True
                 st.session_state["user"] = user
                 st.cache_data.clear()
-    st.rerun()
+                st.rerun()
         else:
             if not qb_secrets_configured():
                 st.info("App credentials not configured in secrets.toml.")
@@ -193,7 +192,7 @@ with st.container(border=True):
                     user["use_simulated_data"] = True
                 st.session_state["user"] = user
                 st.cache_data.clear()
-    st.rerun()
+                st.rerun()
 
     if not toast_connected:
         with st.form("toast_connect_form"):
@@ -243,7 +242,7 @@ with st.container(border=True):
                     ]
                 st.session_state["user"] = db.get_user(username)
                 st.cache_data.clear()
-    st.rerun()
+                st.rerun()
 
 # ── Paychex Flex ──────────────────────────────────────────────────────────────
 with st.container(border=True):
@@ -275,7 +274,7 @@ with st.container(border=True):
                     user["use_simulated_data"] = True
                 st.session_state["user"] = user
                 st.cache_data.clear()
-    st.rerun()
+                st.rerun()
 
     if not px_connected:
         with st.form("paychex_connect_form"):
@@ -325,7 +324,7 @@ with st.container(border=True):
                     ]
                 st.session_state["user"] = db.get_user(username)
                 st.cache_data.clear()
-    st.rerun()
+                st.rerun()
 
 st.caption(
     "After connecting, click **Sync Now** on the Summary page or wait for the "
