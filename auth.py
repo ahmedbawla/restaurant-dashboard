@@ -17,8 +17,7 @@ from data import database as db
 
 def seed_test_user() -> None:
     """Ensure the 'test' demo account exists (no data seeded — user loads demo data manually)."""
-    existing = db.get_user("test")
-    if not existing:
+    if not db.get_user("test"):
         db.create_user(
             username="test",
             plain_password="test",
@@ -26,10 +25,6 @@ def seed_test_user() -> None:
             restaurant_name="The Brass Fork (Demo)",
             use_simulated_data=False,
         )
-    else:
-        # Always clear the test account's data on startup.
-        # It's a shared demo account — demo data is reloaded on demand.
-        db.clear_user_data("test")
 
 
 def require_auth() -> dict:

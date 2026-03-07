@@ -134,6 +134,7 @@ with st.sidebar:
             _msgs.append({"type": "success", "text": f"Synced {real_rows} rows."})
         st.session_state["_sync_flash"] = _msgs
         st.session_state["user"] = db.get_user(username)
+        st.cache_data.clear()
         st.rerun()
 
     if st.button("Load Demo Data", use_container_width=True, key="sidebar_demo"):
@@ -141,6 +142,7 @@ with st.sidebar:
             sync_simulated(user)
         st.session_state["_sync_flash"] = [{"type": "success", "text": "Demo data loaded."}]
         st.session_state["user"] = db.get_user(username)
+        st.cache_data.clear()
         st.rerun()
 
     # Display any flash messages from previous sync/demo action
