@@ -142,19 +142,32 @@ with st.sidebar:
 
 # ── Menu detail table ─────────────────────────────────────────────────────────
 st.divider()
-section_header("Menu Item Profitability Detail", help="Full breakdown per menu item: unit price, unit cost, gross margin %, total quantity sold, and total revenue and profit generated in the period.")
+section_header("Menu Item Profitability Detail", help="Full breakdown per menu item: unit price, total quantity sold, and total revenue generated in the period. Unit Cost and Margin % require recipe costing to be configured in Toast.")
 display = menu_items[menu_items["category"].isin(selected_cats)].copy()
-display["price"]         = display["price"].apply(lambda x: f"${x:.2f}")
-display["cost"]          = display["cost"].apply(lambda x: f"${x:.2f}")
+
+# Derive unit cost — will be $0 if Toast recipe costing is not configured
+display["unit_cost"] = (
+    display["total_cost"] / display["quantity_sold"].replace(0, float("nan"))
+).fillna(0)
+
+display["price"]         = display["price"].apply(lambda x: f"${x:.2f}" if x == x else "—")
+display["unit_cost"]     = display["unit_cost"].apply(lambda x: f"${x:.2f}" if x > 0 else "—")
 display["total_revenue"] = display["total_revenue"].apply(lambda x: f"${x:,.0f}")
-display["total_cost"]    = display["total_cost"].apply(lambda x: f"${x:,.0f}")
+display["total_cost"]    = display["total_cost"].apply(lambda x: f"${x:,.0f}" if x > 0 else "—")
 display["gross_profit"]  = display["gross_profit"].apply(lambda x: f"${x:,.0f}")
-display["margin_pct"]    = display["margin_pct"].apply(lambda x: f"{x:.1f}%")
-display = display[["name","category","price","cost","margin_pct","quantity_sold",
+display["margin_pct"]    = display["margin_pct"].apply(lambda x: f"{x:.1f}%" if x == x else "—")
+display = display[["name","category","price","unit_cost","margin_pct","quantity_sold",
                     "total_revenue","total_cost","gross_profit"]]
 display.columns = ["Item","Category","Price","Unit Cost","Margin %","Qty Sold",
                    "Total Revenue","Total Cost","Gross Profit"]
 st.dataframe(display, use_container_width=True, height=420, hide_index=True)
+
+if (menu_items["total_cost"] == 0).all():
+    st.info(
+        "💡 **Unit costs show $0** because Toast's recipe costing is not configured. "
+        "To see accurate food cost per item, set up Menu Engineering in your Toast account "
+        "(Menu → Menu Engineering → add ingredient costs)."
+    )
 
 st.divider()
 st.caption("Confidential  ·  For authorised recipients only")
