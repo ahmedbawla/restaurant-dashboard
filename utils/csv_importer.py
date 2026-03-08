@@ -131,36 +131,50 @@ def parse_item_selections(raw: bytes, filename: str = "") -> pd.DataFrame:
     df = df.dropna(how="all")
 
     col_map = {
-        "name":          ["Menu Item", "Item Name", "Item", "name", "menu_item"],
-        "category":      ["Menu Group", "Category", "Menu Category",
-                          "category", "menu_group"],
-        "price":         ["Price", "Menu Item Price", "Unit Price",
-                          "price", "menu_price"],
-        "quantity_sold": ["Quantity", "Qty", "Qty Sold", "Count",
-                          "quantity_sold", "quantity"],
-        "total_revenue": ["Gross Sales", "Net Sales", "Total Sales",
-                          "Total Net Sales", "total_revenue", "gross_sales"],
-        "total_cost":    ["Total Cost", "Food Cost", "COGS", "total_cost"],
+        "name":          ["Item, open item", "Menu Item", "Item Name", "Item",
+                          "name", "menu_item"],
+        "category":      ["Menu group", "Menu Group", "Category", "Menu Category",
+                          "Subgroup", "category", "menu_group"],
+        "price":         ["Avg. price", "Price", "Menu Item Price", "Unit Price",
+                          "price", "avg_price"],
+        "quantity_sold": ["Qty sold", "Quantity", "Qty", "Qty Sold", "Count",
+                          "quantity_sold", "qty_sold"],
+        "total_revenue": ["Net sales", "Net Sales", "Gross Sales", "Total Sales",
+                          "total_revenue", "net_sales"],
+        "total_cost":    ["Item COGS", "Total Cost", "Food Cost", "COGS", "total_cost"],
+        "gross_profit":  ["Gross profit", "Gross Profit", "gross_profit"],
+        "margin_pct":    ["Gross margin (%)", "Gross Margin %", "Margin %", "margin_pct"],
     }
     df = _normalise(df, col_map)
 
-    for col in ["name", "category", "price", "quantity_sold", "total_revenue", "total_cost"]:
+    # For All levels.csv: keep only item-level rows (name is populated, qty > 0)
+    if "name" in df.columns:
+        df = df[df["name"].astype(str).str.strip().str.len() > 0]
+        df = df[df["name"].astype(str).str.strip() != "nan"]
+
+    for col in ["name", "category", "price", "quantity_sold", "total_revenue",
+                "total_cost", "gross_profit", "margin_pct"]:
         if col not in df.columns:
             df[col] = 0 if col not in ("name", "category") else "Unknown"
 
     df["name"]          = df["name"].astype(str).str.strip()
-    df["category"]      = df["category"].astype(str).str.strip()
+    df["category"]      = df["category"].astype(str).str.strip().replace("nan", "Uncategorised")
     df["price"]         = _clean_currency(df["price"])
     df["quantity_sold"] = _clean_currency(df["quantity_sold"]).astype(int)
     df["total_revenue"] = _clean_currency(df["total_revenue"])
     df["total_cost"]    = _clean_currency(df["total_cost"])
+    df["gross_profit"]  = _clean_currency(df["gross_profit"])
+    df["margin_pct"]    = _clean_currency(df["margin_pct"])
 
-    df["gross_profit"] = df["total_revenue"] - df["total_cost"]
-    df["margin_pct"]   = (
-        df["gross_profit"] / df["total_revenue"] * 100
-    ).where(df["total_revenue"] > 0, 0).round(2)
+    # Derive gross_profit / margin if not supplied
+    mask = df["gross_profit"] == 0
+    df.loc[mask, "gross_profit"] = df.loc[mask, "total_revenue"] - df.loc[mask, "total_cost"]
+    mask2 = (df["margin_pct"] == 0) & (df["total_revenue"] > 0)
+    df.loc[mask2, "margin_pct"] = (
+        df.loc[mask2, "gross_profit"] / df.loc[mask2, "total_revenue"] * 100
+    ).round(2)
 
-    # Aggregate duplicate items (same name across multiple rows)
+    # Aggregate: one row per item name (sum quantities/revenue across sizes/modifiers)
     df = (
         df.groupby(["name", "category"], as_index=False)
         .agg(
@@ -175,8 +189,8 @@ def parse_item_selections(raw: bytes, filename: str = "") -> pd.DataFrame:
         df["gross_profit"] / df["total_revenue"] * 100
     ).where(df["total_revenue"] > 0, 0).round(2)
 
-    # Drop rows with no name
-    df = df[df["name"].str.len() > 0]
+    # Drop header/total rows (qty = 0 and no real name)
+    df = df[df["quantity_sold"] > 0]
 
     return df[["name", "category", "price", "quantity_sold",
                "total_revenue", "total_cost", "gross_profit", "margin_pct"]].reset_index(drop=True)
