@@ -85,7 +85,7 @@ with st.sidebar:
 
     _view = st.selectbox(
         "View",
-        ["Daily", "Last Month", "Last Quarter", "Last Year", "Custom"],
+        ["Daily", "Monthly", "Current Quarter", "Last Quarter", "Annual", "Custom"],
         key="date_view_select",
     )
 
@@ -96,10 +96,19 @@ with st.sidebar:
         _start_d = max_d
         _end_d   = max_d
 
-    elif _view == "Last Month":
-        _first_this_month = _today.replace(day=1)
-        _end_d   = _first_this_month - timedelta(days=1)
-        _start_d = _end_d.replace(day=1)
+    elif _view == "Monthly":
+        # Rolling 30 days ending today
+        _start_d = _today - timedelta(days=30)
+        _end_d   = _today
+
+    elif _view == "Current Quarter":
+        # Quarter that contains today, from its first day through its last day
+        _cq      = (_today.month - 1) // 3 + 1
+        _cq_sm   = (_cq - 1) * 3 + 1
+        _cq_em   = _cq * 3
+        _start_d = date(_today.year, _cq_sm, 1)
+        _end_d   = date(_today.year, _cq_em,
+                        _calendar.monthrange(_today.year, _cq_em)[1])
 
     elif _view == "Last Quarter":
         _cur_q = (_today.month - 1) // 3 + 1
@@ -114,9 +123,10 @@ with st.sidebar:
             _end_d   = date(_today.year, _em,
                             _calendar.monthrange(_today.year, _em)[1])
 
-    elif _view == "Last Year":
-        _start_d = date(_today.year - 1, 1, 1)
-        _end_d   = date(_today.year - 1, 12, 31)
+    elif _view == "Annual":
+        # Rolling 365 days ending today
+        _start_d = _today - timedelta(days=365)
+        _end_d   = _today
 
     else:  # Custom
         _default_start = max(min_d, max_d - timedelta(days=89))
