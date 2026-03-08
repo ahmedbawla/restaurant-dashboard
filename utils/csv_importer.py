@@ -174,9 +174,15 @@ def parse_item_selections(raw: bytes, filename: str = "") -> pd.DataFrame:
         df.loc[mask2, "gross_profit"] / df.loc[mask2, "total_revenue"] * 100
     ).round(2)
 
-    # Aggregate: one row per item name (sum quantities/revenue across sizes/modifiers)
-    df = (
-        df.groupby(["name", "category"], as_index=False)
+    # Aggregate: one row per item name (sum quantities/revenue across all categories/sizes)
+    # Category = the one with highest revenue for that item
+    cat_df = (
+        df.groupby(["name", "category"], as_index=False)["total_revenue"].sum()
+    )
+    cat_df = cat_df.sort_values("total_revenue", ascending=False).drop_duplicates("name")[["name", "category"]]
+
+    agg_df = (
+        df.groupby("name", as_index=False)
         .agg(
             price=("price", "mean"),
             quantity_sold=("quantity_sold", "sum"),
@@ -185,11 +191,14 @@ def parse_item_selections(raw: bytes, filename: str = "") -> pd.DataFrame:
             gross_profit=("gross_profit", "sum"),
         )
     )
+    df = agg_df.merge(cat_df, on="name", how="left")
+    df["category"] = df["category"].fillna("Uncategorised")
+
     df["margin_pct"] = (
         df["gross_profit"] / df["total_revenue"] * 100
     ).where(df["total_revenue"] > 0, 0).round(2)
 
-    # Drop header/total rows (qty = 0 and no real name)
+    # Drop header/total rows (qty = 0)
     df = df[df["quantity_sold"] > 0]
 
     return df[["name", "category", "price", "quantity_sold",
