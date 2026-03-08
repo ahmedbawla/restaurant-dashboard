@@ -44,7 +44,7 @@ _BRAND_CSS = """
 
 /* ── Logo ── */
 .tm-logo {
-    font-size: 5rem; font-weight: 900; letter-spacing: -3px; line-height: 1;
+    font-size: 8rem; font-weight: 900; letter-spacing: -4px; line-height: 1;
     background: linear-gradient(135deg, #FF6B35 0%, #FF4B4B 45%, #FF8C42 100%);
     -webkit-background-clip: text; -webkit-text-fill-color: transparent;
     background-clip: text; text-align: center;
