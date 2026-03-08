@@ -29,15 +29,106 @@ _HIDE_SIDEBAR = """
 
 _BRAND_CSS = """
 <style>
-.tm-title {
-    font-size: 3rem; font-weight: 800; letter-spacing: -1px;
-    background: linear-gradient(135deg, #FF4B4B 0%, #FF8C42 100%);
-    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
-    background-clip: text; text-align: center; margin-bottom: 0.1rem;
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');
+
+/* ── Global page background ── */
+[data-testid="stAppViewContainer"] {
+    background: radial-gradient(ellipse 80% 60% at 50% -10%, rgba(255,100,60,0.18) 0%, transparent 70%),
+                radial-gradient(ellipse 60% 50% at 80% 80%, rgba(255,75,75,0.10) 0%, transparent 60%),
+                #0e0e10 !important;
+    font-family: 'Inter', sans-serif;
 }
-.tm-sub {
-    text-align: center; color: rgba(255,255,255,0.45);
-    font-size: 1.05rem; margin-bottom: 2.5rem;
+[data-testid="stMain"] { background: transparent !important; }
+[data-testid="stHeader"] { background: transparent !important; }
+.main .block-container { padding-top: 0 !important; max-width: 100% !important; }
+
+/* ── Logo ── */
+.tm-logo {
+    font-size: 3.6rem; font-weight: 900; letter-spacing: -2px; line-height: 1;
+    background: linear-gradient(135deg, #FF6B35 0%, #FF4B4B 45%, #FF8C42 100%);
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    background-clip: text; text-align: center;
+    margin-bottom: 0.4rem;
+    filter: drop-shadow(0 0 40px rgba(255,75,75,0.35));
+}
+.tm-tagline {
+    text-align: center; color: rgba(255,255,255,0.5);
+    font-size: 1.1rem; font-weight: 400; letter-spacing: 0.01em;
+    margin-bottom: 0.1rem;
+}
+.tm-eyebrow {
+    text-align: center;
+    font-size: 0.72rem; font-weight: 600; letter-spacing: 3px;
+    text-transform: uppercase;
+    color: rgba(255,107,53,0.75);
+    margin-bottom: 0.9rem;
+}
+
+/* ── Feature chips ── */
+.tm-chips {
+    display: flex; flex-wrap: wrap; justify-content: center;
+    gap: 0.5rem; margin: 1.6rem 0 1.8rem 0;
+}
+.tm-chip {
+    background: rgba(255,255,255,0.06);
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 999px;
+    padding: 0.3rem 0.85rem;
+    font-size: 0.78rem; font-weight: 500;
+    color: rgba(255,255,255,0.65);
+    white-space: nowrap;
+}
+.tm-chip span { margin-right: 0.3rem; }
+
+/* ── Integration badges ── */
+.tm-integrations {
+    text-align: center; margin-bottom: 0.5rem;
+}
+.tm-int-label {
+    font-size: 0.68rem; font-weight: 600; letter-spacing: 2px;
+    text-transform: uppercase; color: rgba(255,255,255,0.28);
+    margin-bottom: 0.55rem;
+}
+.tm-badges {
+    display: flex; flex-wrap: wrap; justify-content: center; gap: 0.5rem;
+}
+.tm-badge {
+    background: rgba(255,255,255,0.05);
+    border: 1px solid rgba(255,255,255,0.09);
+    border-radius: 6px;
+    padding: 0.25rem 0.7rem;
+    font-size: 0.73rem; font-weight: 500;
+    color: rgba(255,255,255,0.4);
+}
+
+/* ── Divider ── */
+.tm-divider {
+    width: 48px; height: 2px; margin: 2rem auto 0 auto;
+    background: linear-gradient(90deg, transparent, rgba(255,107,53,0.5), transparent);
+    border-radius: 999px;
+}
+
+/* ── Form card ── */
+.tm-card {
+    background: rgba(255,255,255,0.04);
+    border: 1px solid rgba(255,255,255,0.09);
+    border-radius: 16px;
+    padding: 2rem 2rem 1.6rem 2rem;
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    margin-bottom: 1rem;
+}
+.tm-form-logo {
+    font-size: 1.6rem; font-weight: 900; letter-spacing: -0.5px;
+    background: linear-gradient(135deg, #FF6B35 0%, #FF4B4B 100%);
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    background-clip: text; text-align: center;
+    margin-bottom: 0.2rem;
+}
+.tm-form-title {
+    font-size: 1.4rem; font-weight: 700;
+    color: rgba(255,255,255,0.9); margin-bottom: 1.2rem;
+    letter-spacing: -0.3px;
 }
 .tm-step-title {
     font-size: 1.5rem; font-weight: 700; margin-bottom: 1rem;
@@ -108,13 +199,34 @@ def _center():
 
 
 def _landing():
-    st.markdown("<div style='height:12vh'></div>", unsafe_allow_html=True)
+    st.markdown("<div style='height:9vh'></div>", unsafe_allow_html=True)
     with _center():
-        st.markdown('<p class="tm-title">TableMetrics</p>', unsafe_allow_html=True)
+        st.markdown('<div class="tm-eyebrow">Restaurant Intelligence Platform</div>', unsafe_allow_html=True)
+        st.markdown('<p class="tm-logo">TableMetrics</p>', unsafe_allow_html=True)
         st.markdown(
-            '<p class="tm-sub">Restaurant intelligence, simplified.</p>',
+            '<p class="tm-tagline">Your numbers, at a glance. Every shift, every day.</p>',
             unsafe_allow_html=True,
         )
+        st.markdown("""
+        <div class="tm-chips">
+            <div class="tm-chip"><span>📈</span>Revenue Trends</div>
+            <div class="tm-chip"><span>🧑‍🍳</span>Labour Costs</div>
+            <div class="tm-chip"><span>🧾</span>Expense Tracking</div>
+            <div class="tm-chip"><span>⚡</span>Live Sync</div>
+            <div class="tm-chip"><span>📊</span>Health Score</div>
+        </div>
+        <div class="tm-integrations">
+            <div class="tm-int-label">Integrates with</div>
+            <div class="tm-badges">
+                <div class="tm-badge">Toast POS</div>
+                <div class="tm-badge">Paychex</div>
+                <div class="tm-badge">QuickBooks</div>
+            </div>
+        </div>
+        <div class="tm-divider"></div>
+        """, unsafe_allow_html=True)
+
+        st.markdown("<div style='height:1.8rem'></div>", unsafe_allow_html=True)
         c1, c2 = st.columns(2)
         with c1:
             if st.button("Log In", use_container_width=True, type="primary"):
@@ -127,17 +239,20 @@ def _landing():
 
 
 def _login():
+    st.markdown("<div style='height:9vh'></div>", unsafe_allow_html=True)
     with _center():
-        st.markdown('<p class="tm-title" style="font-size:2rem">TableMetrics</p>',
-                    unsafe_allow_html=True)
-        st.markdown('<p class="tm-step-title">Log In</p>', unsafe_allow_html=True)
+        st.markdown('<div class="tm-card">', unsafe_allow_html=True)
+        st.markdown('<p class="tm-form-logo">TableMetrics</p>', unsafe_allow_html=True)
+        st.markdown('<p class="tm-form-title">Welcome back</p>', unsafe_allow_html=True)
 
         with st.form("login_form"):
             username  = st.text_input("Username")
             password  = st.text_input("Password", type="password")
-            submitted = st.form_submit_button("Log In", use_container_width=True)
+            submitted = st.form_submit_button("Log In →", use_container_width=True)
 
-        if st.button("← Back", key="login_back"):
+        st.markdown('</div>', unsafe_allow_html=True)
+
+        if st.button("← Back to home", key="login_back", use_container_width=True):
             st.session_state["_auth_screen"] = "landing"
             st.rerun()
 
@@ -159,10 +274,11 @@ def _login():
 
 
 def _register():
+    st.markdown("<div style='height:6vh'></div>", unsafe_allow_html=True)
     with _center():
-        st.markdown('<p class="tm-title" style="font-size:2rem">TableMetrics</p>',
-                    unsafe_allow_html=True)
-        st.markdown('<p class="tm-step-title">Create Account</p>', unsafe_allow_html=True)
+        st.markdown('<div class="tm-card">', unsafe_allow_html=True)
+        st.markdown('<p class="tm-form-logo">TableMetrics</p>', unsafe_allow_html=True)
+        st.markdown('<p class="tm-form-title">Create your account</p>', unsafe_allow_html=True)
 
         with st.form("register_form"):
             restaurant = st.text_input("Restaurant Name")
@@ -174,9 +290,11 @@ def _register():
             )
             password   = st.text_input("Password", type="password")
             confirm    = st.text_input("Confirm Password", type="password")
-            submitted  = st.form_submit_button("Create Account", use_container_width=True)
+            submitted  = st.form_submit_button("Create Account →", use_container_width=True)
 
-        if st.button("← Back", key="register_back"):
+        st.markdown('</div>', unsafe_allow_html=True)
+
+        if st.button("← Back to home", key="register_back", use_container_width=True):
             st.session_state["_auth_screen"] = "landing"
             st.rerun()
 
