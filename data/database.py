@@ -249,6 +249,22 @@ def init_db() -> None:
             "ALTER TABLE users ADD COLUMN IF NOT EXISTS last_sync_status TEXT"
         ))
 
+    # Phone number for SMS 2FA
+    with engine.begin() as conn:
+        conn.execute(text(
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS phone_number TEXT"
+        ))
+
+    # Remember-me token (30-day cookie auth)
+    with engine.begin() as conn:
+        conn.execute(text(
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS remember_token TEXT"
+        ))
+    with engine.begin() as conn:
+        conn.execute(text(
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS remember_token_expires TIMESTAMPTZ"
+        ))
+
     # Track whether the QB refresh token includes the banking scope.
     # Set True by the OAuth callback; reset False on disconnect.
     with engine.begin() as conn:
@@ -332,6 +348,7 @@ def create_user(
     restaurant_name: str,
     use_simulated_data: bool = True,
     email: str | None = None,
+    phone_number: str | None = None,
     **api_keys,
 ) -> None:
     """Insert a new user. Raises ValueError if username is already taken."""
@@ -341,31 +358,34 @@ def create_user(
         with engine.begin() as conn:
             conn.execute(text("""
                 INSERT INTO users (
-                    username, password_hash, email, restaurant_name, use_simulated_data,
+                    username, password_hash, email, phone_number,
+                    restaurant_name, use_simulated_data,
                     toast_api_key, toast_guid,
                     paychex_client_id, paychex_client_secret, paychex_company_id,
                     qb_client_id, qb_client_secret, qb_realm_id, qb_refresh_token
                 ) VALUES (
-                    :username, :password_hash, :email, :restaurant_name, :use_simulated_data,
+                    :username, :password_hash, :email, :phone_number,
+                    :restaurant_name, :use_simulated_data,
                     :toast_api_key, :toast_guid,
                     :paychex_client_id, :paychex_client_secret, :paychex_company_id,
                     :qb_client_id, :qb_client_secret, :qb_realm_id, :qb_refresh_token
                 )
             """), {
-                "username": username,
-                "password_hash": pw_hash,
-                "email": email,
-                "restaurant_name": restaurant_name,
-                "use_simulated_data": use_simulated_data,
-                "toast_api_key": api_keys.get("toast_api_key"),
-                "toast_guid": api_keys.get("toast_guid"),
-                "paychex_client_id": api_keys.get("paychex_client_id"),
+                "username":              username,
+                "password_hash":         pw_hash,
+                "email":                 email,
+                "phone_number":          phone_number,
+                "restaurant_name":       restaurant_name,
+                "use_simulated_data":    use_simulated_data,
+                "toast_api_key":         api_keys.get("toast_api_key"),
+                "toast_guid":            api_keys.get("toast_guid"),
+                "paychex_client_id":     api_keys.get("paychex_client_id"),
                 "paychex_client_secret": api_keys.get("paychex_client_secret"),
-                "paychex_company_id": api_keys.get("paychex_company_id"),
-                "qb_client_id": api_keys.get("qb_client_id"),
-                "qb_client_secret": api_keys.get("qb_client_secret"),
-                "qb_realm_id": api_keys.get("qb_realm_id"),
-                "qb_refresh_token": api_keys.get("qb_refresh_token"),
+                "paychex_company_id":    api_keys.get("paychex_company_id"),
+                "qb_client_id":          api_keys.get("qb_client_id"),
+                "qb_client_secret":      api_keys.get("qb_client_secret"),
+                "qb_realm_id":           api_keys.get("qb_realm_id"),
+                "qb_refresh_token":      api_keys.get("qb_refresh_token"),
             })
     except IntegrityError:
         raise ValueError(f"Username '{username}' is already taken.")
@@ -389,6 +409,22 @@ def authenticate_user(username: str, plain_password: str) -> dict | None:
     return None
 
 
+def verify_remember_token(username: str, token: str) -> bool:
+    """Return True if the remember-me token is valid and not yet expired."""
+    from datetime import datetime, timezone
+    user = get_user(username)
+    if not user or user.get("remember_token") != token:
+        return False
+    expires = user.get("remember_token_expires")
+    if not expires:
+        return False
+    if isinstance(expires, str):
+        expires = datetime.fromisoformat(expires)
+    if expires.tzinfo is None:
+        expires = expires.replace(tzinfo=timezone.utc)
+    return datetime.now(timezone.utc) < expires
+
+
 def update_user(username: str, **fields) -> None:
     """Update allowed user fields in-place."""
     allowed = {
@@ -397,6 +433,7 @@ def update_user(username: str, **fields) -> None:
         "toast_username", "toast_password_enc",
         "paychex_client_id", "paychex_client_secret", "paychex_company_id",
         "paychex_username", "paychex_password_enc",
+        "phone_number", "remember_token", "remember_token_expires",
         "qb_realm_id", "qb_refresh_token", "oauth_state", "qb_banking_scope",
         "use_simulated_data",
         "last_sync_at", "last_sync_status",
