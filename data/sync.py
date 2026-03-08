@@ -86,6 +86,12 @@ def sync_all(user: dict, days_back: int = 90) -> dict:
         qb = get_connector("quickbooks", user)
         rows = 0
         expenses = qb["get_expenses"](start_date, end_date)
+        # Append unreviewed bank feed transactions (requires banking OAuth scope;
+        # returns empty silently if scope not yet granted).
+        pending = qb["get_pending_bank_transactions"](start_date, end_date)
+        if not pending.empty:
+            import pandas as _pd
+            expenses = _pd.concat([expenses, pending], ignore_index=True)
         upsert_df(expenses, "expenses", username)
         rows += len(expenses)
 

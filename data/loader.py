@@ -104,8 +104,9 @@ def get_connector(source: str, user: dict):
                 "username":      user.get("username"),
             })
             return {
-                "get_expenses":  conn.get_expenses,
-                "get_cash_flow": conn.get_cash_flow,
+                "get_expenses":                  conn.get_expenses,
+                "get_cash_flow":                 conn.get_cash_flow,
+                "get_pending_bank_transactions": conn.get_pending_bank_transactions,
             }
         raise ValueError("No QuickBooks credentials configured.")
 

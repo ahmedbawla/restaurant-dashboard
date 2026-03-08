@@ -249,6 +249,13 @@ def init_db() -> None:
             "ALTER TABLE users ADD COLUMN IF NOT EXISTS last_sync_status TEXT"
         ))
 
+    # Track whether the QB refresh token includes the banking scope.
+    # Set True by the OAuth callback; reset False on disconnect.
+    with engine.begin() as conn:
+        conn.execute(text(
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS qb_banking_scope BOOLEAN NOT NULL DEFAULT FALSE"
+        ))
+
     # One-time migration: clear stale simulated data written by the old
     # loader.py fallback (before the fix that made sync_all raise on missing creds).
     # Uses a flag column so this runs exactly once.
@@ -390,7 +397,7 @@ def update_user(username: str, **fields) -> None:
         "toast_username", "toast_password_enc",
         "paychex_client_id", "paychex_client_secret", "paychex_company_id",
         "paychex_username", "paychex_password_enc",
-        "qb_realm_id", "qb_refresh_token", "oauth_state",
+        "qb_realm_id", "qb_refresh_token", "oauth_state", "qb_banking_scope",
         "use_simulated_data",
         "last_sync_at", "last_sync_status",
     }

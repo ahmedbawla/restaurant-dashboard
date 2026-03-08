@@ -30,6 +30,18 @@ if expenses.empty:
 
 expenses["date"] = pd.to_datetime(expenses["date"])
 
+# ── Pending review notice ──────────────────────────────────────────────────────
+_pending_mask = expenses["category"] == "Pending Review"
+if _pending_mask.any():
+    _p_count  = int(_pending_mask.sum())
+    _p_amount = expenses.loc[_pending_mask, "amount"].sum()
+    st.info(
+        f"**{_p_count:,} unreviewed transaction{'s' if _p_count != 1 else ''}** "
+        f"({format_currency(_p_amount)}) have not yet been categorised in QuickBooks "
+        f"and are labelled **'Pending Review'**. They are included in all totals. "
+        f"To categorise them, go to **QBO → Banking → For Review**."
+    )
+
 # ── Sidebar filters ───────────────────────────────────────────────────────────
 with st.sidebar:
     st.header("Filters")

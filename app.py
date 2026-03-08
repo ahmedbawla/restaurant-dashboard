@@ -45,10 +45,11 @@ if "code" in _qp and "state" in _qp:
             _realm_id = _qp.get("realmId", "")
             db.update_user(
                 _qb_username,
-                qb_realm_id      = _realm_id,
-                qb_refresh_token = _tokens["refresh_token"],
-                oauth_state      = None,
+                qb_realm_id        = _realm_id,
+                qb_refresh_token   = _tokens["refresh_token"],
+                oauth_state        = None,
                 use_simulated_data = False,
+                qb_banking_scope   = True,  # SCOPES now always includes banking
             )
             _refreshed_user = db.get_user(_qb_username)
             st.session_state["user"] = dict(_refreshed_user)

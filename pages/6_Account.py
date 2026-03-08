@@ -112,7 +112,8 @@ st.divider()
 # ── Integrations ──────────────────────────────────────────────────────────────
 st.subheader("Integrations")
 
-qb_connected = bool(user.get("qb_realm_id") and user.get("qb_refresh_token"))
+qb_connected    = bool(user.get("qb_realm_id") and user.get("qb_refresh_token"))
+qb_has_banking  = bool(user.get("qb_banking_scope"))
 
 toast_has_api_creds    = bool(user.get("toast_api_key") and user.get("toast_client_secret") and user.get("toast_guid"))
 toast_has_portal_creds = bool(user.get("toast_username") and user.get("toast_password_enc"))
@@ -131,19 +132,37 @@ with st.container(border=True):
     with col_status:
         if qb_connected:
             st.success(f"Connected — Company ID: `{user['qb_realm_id']}`")
+            if not qb_has_banking:
+                st.caption("⚠️ Bank feed access not enabled — click **Add Bank Feed Access** to include pending transactions.")
         else:
             st.warning("Not connected")
     with col_action:
         if qb_connected:
             if st.button("Disconnect", key="qb_disconnect", use_container_width=True):
-                db.update_user(username, qb_realm_id=None, qb_refresh_token=None)
-                user.update({"qb_realm_id": None, "qb_refresh_token": None})
+                db.update_user(username, qb_realm_id=None, qb_refresh_token=None,
+                               qb_banking_scope=False)
+                user.update({"qb_realm_id": None, "qb_refresh_token": None,
+                             "qb_banking_scope": False})
                 if not _any_real_connector(user):
                     db.update_user(username, use_simulated_data=True)
                     user["use_simulated_data"] = True
                 st.session_state["user"] = user
                 st.cache_data.clear()
                 st.rerun()
+            if not qb_has_banking and qb_secrets_configured():
+                from utils.oauth_quickbooks import generate_nonce, get_auth_url as qb_auth_url
+                if "qb_upgrade_nonce" not in st.session_state:
+                    _upg_nonce = generate_nonce()
+                    db.update_user(username, oauth_state=_upg_nonce)
+                    st.session_state["qb_upgrade_nonce"] = _upg_nonce
+                st.markdown(
+                    f'<a href="{qb_auth_url(username, st.session_state["qb_upgrade_nonce"])}" '
+                    f'target="_blank" rel="noopener noreferrer">'
+                    f'<button style="width:100%;background:#2ecc71;color:white;border:none;'
+                    f'padding:0.45rem 1rem;border-radius:0.5rem;font-weight:600;'
+                    f'font-size:0.9rem;cursor:pointer;margin-top:0.4rem;">Add Bank Feed Access ↗</button></a>',
+                    unsafe_allow_html=True,
+                )
         else:
             if not qb_secrets_configured():
                 st.info("App credentials not configured in secrets.toml.")

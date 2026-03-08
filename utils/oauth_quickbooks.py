@@ -19,7 +19,7 @@ import requests
 
 AUTH_ENDPOINT  = "https://appcenter.intuit.com/connect/oauth2"
 TOKEN_ENDPOINT = "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer"
-SCOPES         = "com.intuit.quickbooks.accounting"
+SCOPES         = "com.intuit.quickbooks.accounting com.intuit.quickbooks.banking"
 
 
 def _get_secrets() -> dict:
