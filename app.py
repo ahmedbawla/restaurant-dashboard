@@ -3,6 +3,7 @@ Entry point — handles auth, global date range, and page routing.
 Run with: python -m streamlit run app.py
 """
 
+import calendar as _calendar
 import json
 import sys
 from datetime import date, timedelta
@@ -81,20 +82,66 @@ max_d = date.fromisoformat(max_str)
 with st.sidebar:
     st.divider()
     st.caption("ANALYSIS PERIOD")
-    default_start = max(min_d, max_d - timedelta(days=89))
-    picked = st.date_input(
-        "Date Range",
-        value=(default_start, max_d),
-        min_value=min_d,
-        max_value=max_d,
-        key="global_date_range",
+
+    _view = st.selectbox(
+        "View",
+        ["Daily", "Last Month", "Last Quarter", "Last Year", "Custom"],
+        key="date_view_select",
     )
-    if isinstance(picked, (list, tuple)) and len(picked) == 2:
-        st.session_state["start_date"] = picked[0].isoformat()
-        st.session_state["end_date"]   = picked[1].isoformat()
-    else:
-        st.session_state["start_date"] = default_start.isoformat()
-        st.session_state["end_date"]   = max_d.isoformat()
+
+    _today = date.today()
+
+    if _view == "Daily":
+        # Most recent synced business day
+        _start_d = max_d
+        _end_d   = max_d
+
+    elif _view == "Last Month":
+        _first_this_month = _today.replace(day=1)
+        _end_d   = _first_this_month - timedelta(days=1)
+        _start_d = _end_d.replace(day=1)
+
+    elif _view == "Last Quarter":
+        _cur_q = (_today.month - 1) // 3 + 1
+        if _cur_q == 1:
+            _start_d = date(_today.year - 1, 10, 1)
+            _end_d   = date(_today.year - 1, 12, 31)
+        else:
+            _pq      = _cur_q - 1
+            _sm      = (_pq - 1) * 3 + 1
+            _em      = _pq * 3
+            _start_d = date(_today.year, _sm, 1)
+            _end_d   = date(_today.year, _em,
+                            _calendar.monthrange(_today.year, _em)[1])
+
+    elif _view == "Last Year":
+        _start_d = date(_today.year - 1, 1, 1)
+        _end_d   = date(_today.year - 1, 12, 31)
+
+    else:  # Custom
+        _default_start = max(min_d, max_d - timedelta(days=89))
+        _picked = st.date_input(
+            "Date Range",
+            value=(_default_start, max_d),
+            min_value=min_d,
+            max_value=max_d,
+            key="global_date_range",
+        )
+        if isinstance(_picked, (list, tuple)) and len(_picked) == 2:
+            _start_d, _end_d = _picked[0], _picked[1]
+        else:
+            _start_d, _end_d = _default_start, max_d
+
+    if _view != "Custom":
+        # Clamp to the range of data we actually have
+        _start_d = max(min_d, _start_d)
+        _end_d   = min(max_d, _end_d)
+        if _start_d > _end_d:
+            st.caption("No data available for this period — showing most recent data.")
+            _start_d = _end_d = max_d
+
+    st.session_state["start_date"] = _start_d.isoformat()
+    st.session_state["end_date"]   = _end_d.isoformat()
 
     # ── Data controls ─────────────────────────────────────────────────────────
     st.divider()

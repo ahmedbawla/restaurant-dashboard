@@ -473,12 +473,27 @@ def _date_clauses(start_date: str | None, end_date: str | None, col: str = "date
 
 @_streamlit_cache(ttl=600)
 def get_date_range(username: str) -> tuple[str, str]:
-    """Return (min_date, max_date) ISO strings for the user's available data."""
+    """Return (min_date, max_date) ISO strings across ALL of the user's data tables.
+
+    Checks daily_sales, expenses, daily_labor, and cash_flow so that the date
+    picker reflects the earliest and latest data available from any source,
+    not just Toast POS sales.
+    """
     result = _query(
-        "SELECT MIN(date) as min_d, MAX(date) as max_d FROM daily_sales WHERE username = :u",
+        """
+        SELECT MIN(d) AS min_d, MAX(d) AS max_d FROM (
+            SELECT date AS d FROM daily_sales  WHERE username = :u
+            UNION ALL
+            SELECT date AS d FROM expenses     WHERE username = :u
+            UNION ALL
+            SELECT date AS d FROM daily_labor  WHERE username = :u
+            UNION ALL
+            SELECT date AS d FROM cash_flow    WHERE username = :u
+        ) t
+        """,
         {"u": username},
     )
-    today = date.today().isoformat()
+    today          = date.today().isoformat()
     fallback_start = (date.today() - timedelta(days=89)).isoformat()
     if not result.empty and result.iloc[0]["min_d"]:
         return str(result.iloc[0]["min_d"]), str(result.iloc[0]["max_d"])
