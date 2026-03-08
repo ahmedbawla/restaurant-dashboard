@@ -1,173 +1,218 @@
 """
-Inventory & Food Cost — Toast POS menu and cost data.
+Menu Mix & Sales Analytics — item-level performance from Toast POS data.
 """
 
-import json
-from pathlib import Path
-
+import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
-from components.charts import food_cost_trend, menu_profitability_scatter, menu_engineering_quadrant
-from components.kpi_card import format_currency, threshold_badge
 from components.theme import page_header, section_header
+from components.kpi_card import format_currency
 from data import database as db
 
-with open(Path(__file__).parent.parent / "config.json") as f:
-    CONFIG = json.load(f)
-THRESHOLDS   = CONFIG.get("thresholds", {})
-FOOD_TARGET  = THRESHOLDS.get("food_cost_pct_target",  30.0)
-FOOD_WARNING = THRESHOLDS.get("food_cost_pct_warning", 33.0)
-
-user       = st.session_state["user"]
-username   = user["username"]
-start_date = st.session_state.get("start_date")
-end_date   = st.session_state.get("end_date")
+user     = st.session_state["user"]
+username = user["username"]
 
 page_header(
-    "🥩 Inventory & Food Cost",
-    subtitle="Food cost analysis and menu profitability sourced from Toast POS.",
-    eyebrow="Cost of Goods Analysis",
+    "🥩 Menu Mix & Item Performance",
+    subtitle="Item-level sales analytics sourced from Toast POS.",
+    eyebrow="Menu Analytics",
 )
 
-# ── Data ─────────────────────────────────────────────────────────────────────
-daily_sales = db.get_daily_sales(username, start_date=start_date, end_date=end_date)
-menu_items  = db.get_menu_items(username)
+# ── Data ──────────────────────────────────────────────────────────────────────
+menu_items = db.get_menu_items(username)
 
-if daily_sales.empty or menu_items.empty:
-    st.warning("No data found for the selected period.")
+if menu_items.empty:
+    st.warning("No menu data found. Upload an Item Selections CSV in Account Settings.")
     st.stop()
 
-# ── Computed metrics ──────────────────────────────────────────────────────────
-avg_food_pct        = daily_sales["food_cost_pct"].mean()
-total_food_cost     = daily_sales["food_cost"].sum()
-total_revenue       = daily_sales["revenue"].sum()
-actual_food_pct     = total_food_cost / total_revenue * 100 if total_revenue else 0.0
-theoretical_cost    = menu_items["total_cost"].sum()
-theoretical_revenue = menu_items["total_revenue"].sum()
-theoretical_pct     = theoretical_cost / theoretical_revenue * 100 if theoretical_revenue else 0.0
-variance            = actual_food_pct - theoretical_pct
-
-# ── Variance alert banner ─────────────────────────────────────────────────────
-if variance > 4:
-    st.error(
-        f"**High Variance Alert** — Actual food cost is **{variance:+.1f}%** above theoretical. "
-        "This may indicate waste, spoilage, theft, or portioning inconsistencies. Immediate review recommended."
-    )
-elif variance > 2:
-    st.warning(
-        f"**Variance Notice** — Actual food cost is **{variance:+.1f}%** above theoretical. "
-        "Monitor portioning and receiving accuracy."
-    )
-
 # ── KPI strip ─────────────────────────────────────────────────────────────────
-section_header("Cost Overview", help="Food/beverage cost metrics for the selected period. Variance = actual food cost % minus the theoretical cost % based on menu item costs × quantities sold.")
+section_header("Menu Overview")
+
+total_items    = len(menu_items)
+total_qty      = menu_items["quantity_sold"].sum()
+total_revenue  = menu_items["total_revenue"].sum()
+avg_item_price = menu_items["price"].mean()
+top_category   = (
+    menu_items.groupby("category")["total_revenue"].sum().idxmax()
+    if not menu_items.empty else "—"
+)
+
 k1, k2, k3, k4, k5 = st.columns(5)
 with k1:
-    st.metric("Avg. Food Cost %",
-              threshold_badge(avg_food_pct, FOOD_TARGET, FOOD_WARNING),
-              help=f"Target ≤{FOOD_TARGET:.0f}%  |  Warning >{FOOD_WARNING:.0f}%")
+    st.metric("Total Menu Items", f"{total_items:,}")
 with k2:
-    st.metric("Total Food Cost",     format_currency(total_food_cost))
+    st.metric("Total Qty Sold", f"{total_qty:,}")
 with k3:
-    st.metric("Total Revenue",       format_currency(total_revenue))
+    st.metric("Total Menu Revenue", format_currency(total_revenue))
 with k4:
-    st.metric("Theoretical Cost %",  f"{theoretical_pct:.1f}%",
-              help="Ideal food cost based on menu item costs × quantity sold.")
+    st.metric("Avg Menu Price", format_currency(avg_item_price))
 with k5:
-    delta_color = "inverse" if variance > 2 else "normal"
-    st.metric("Actual vs Theoretical", f"{variance:+.1f}%",
-              delta_color=delta_color,
-              help="Positive = waste/theft/portioning issues.")
+    st.metric("Top Category", top_category)
 
 st.divider()
 
-# ── Food cost trend ───────────────────────────────────────────────────────────
-section_header("Food Cost % Trend", help="Daily food/beverage cost as a % of revenue. A rising trend may indicate waste, price increases from suppliers, or portioning issues.")
-st.plotly_chart(food_cost_trend(daily_sales), use_container_width=True)
+# ── Revenue & quantity by category ────────────────────────────────────────────
+section_header("Sales by Category", help="Revenue and quantity sold broken down by menu category.")
 
-st.divider()
-
-# ── Menu Engineering Matrix ───────────────────────────────────────────────────
-section_header("Menu Engineering Matrix", help="Each item is plotted by popularity (units sold) and profitability (gross margin %). Stars = promote these. Plowhorses = high volume but low margin — consider price increase. Puzzles = high margin but low volume — improve visibility. Dogs = low on both — candidates for removal.")
-st.caption(
-    "**Stars** = high margin + high popularity  ·  "
-    "**Plowhorses** = high popularity, low margin  ·  "
-    "**Puzzles** = high margin, low popularity  ·  "
-    "**Dogs** = low margin + low popularity"
+cat_df = (
+    menu_items.groupby("category", as_index=False)
+    .agg(total_revenue=("total_revenue", "sum"), quantity_sold=("quantity_sold", "sum"))
+    .sort_values("total_revenue", ascending=False)
 )
-st.plotly_chart(menu_engineering_quadrant(menu_items), use_container_width=True)
+cat_df["revenue_pct"] = (cat_df["total_revenue"] / cat_df["total_revenue"].sum() * 100).round(1)
+
+col_bar, col_pie = st.columns(2)
+
+_LAYOUT = dict(
+    plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+    font=dict(color="rgba(240,242,246,0.75)"),
+    margin=dict(l=0, r=0, t=38, b=0),
+    title_font=dict(size=13, color="rgba(240,242,246,0.6)"),
+)
+
+with col_bar:
+    fig = px.bar(
+        cat_df.sort_values("total_revenue"),
+        x="total_revenue", y="category", orientation="h",
+        color="total_revenue",
+        color_continuous_scale=["#3a1a0a", "#FF6B35"],
+        labels={"total_revenue": "Revenue", "category": ""},
+        title="Revenue by Category",
+        text=cat_df.sort_values("total_revenue")["revenue_pct"].apply(lambda v: f"{v:.1f}%"),
+    )
+    fig.update_traces(textposition="outside")
+    fig.update_coloraxes(showscale=False)
+    fig.update_xaxes(tickprefix="$", gridcolor="rgba(255,255,255,0.06)")
+    fig.update_layout(**_LAYOUT)
+    st.plotly_chart(fig, use_container_width=True)
+
+with col_pie:
+    fig2 = px.pie(
+        cat_df, values="total_revenue", names="category",
+        title="Revenue Share by Category",
+        color_discrete_sequence=px.colors.qualitative.Set2,
+    )
+    fig2.update_traces(textposition="inside", textinfo="percent+label")
+    fig2.update_layout(**_LAYOUT)
+    st.plotly_chart(fig2, use_container_width=True)
 
 st.divider()
 
-# ── Profitability scatter & top cost items ────────────────────────────────────
-section_header("Item-Level Profitability", help="Left: items with the highest total cost to produce — these drive your COGS the most. Right: items with the best gross margin % — your most profitable items per sale.")
-col1, col2 = st.columns(2)
+# ── Top items by revenue & quantity ──────────────────────────────────────────
+section_header("Top Performers", help="Items ranked by total revenue (left) and quantity sold (right).")
 
-_LAYOUT_MINI = dict(
+col_rev, col_qty = st.columns(2)
+
+_MINI = dict(
     plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
     font=dict(color="rgba(240,242,246,0.7)"),
     margin=dict(l=0, r=0, t=38, b=0),
     title_font=dict(size=13, color="rgba(240,242,246,0.6)"),
 )
-_GRID_MINI = dict(gridcolor="rgba(255,255,255,0.06)")
+_GRID = dict(gridcolor="rgba(255,255,255,0.06)")
 
-with col1:
-    top_cost = menu_items.nlargest(10, "total_cost")[["name","total_cost"]].sort_values("total_cost")
-    fig = go.Figure(go.Bar(
-        x=top_cost["total_cost"], y=top_cost["name"],
-        orientation="h", marker_color="#e74c3c", marker_line_width=0,
+with col_rev:
+    top_rev = menu_items.nlargest(10, "total_revenue")[["name", "total_revenue"]].sort_values("total_revenue")
+    fig3 = go.Figure(go.Bar(
+        x=top_rev["total_revenue"], y=top_rev["name"],
+        orientation="h", marker_color="#FF6B35", marker_line_width=0,
     ))
-    fig.update_layout(title="Top 10 Items by Total Cost",
-                      xaxis=dict(tickprefix="$", **_GRID_MINI), **_LAYOUT_MINI)
-    st.plotly_chart(fig, use_container_width=True)
+    fig3.update_layout(title="Top 10 by Revenue", xaxis=dict(tickprefix="$", **_GRID), **_MINI)
+    st.plotly_chart(fig3, use_container_width=True)
 
-with col2:
-    best = menu_items.nlargest(10, "margin_pct")[["name","margin_pct"]].sort_values("margin_pct")
-    fig2 = go.Figure(go.Bar(
-        x=best["margin_pct"], y=best["name"],
+with col_qty:
+    top_qty = menu_items.nlargest(10, "quantity_sold")[["name", "quantity_sold"]].sort_values("quantity_sold")
+    fig4 = go.Figure(go.Bar(
+        x=top_qty["quantity_sold"], y=top_qty["name"],
         orientation="h", marker_color="#27ae60", marker_line_width=0,
     ))
-    fig2.update_layout(title="Top 10 Items by Gross Margin %",
-                       xaxis=dict(ticksuffix="%", **_GRID_MINI), **_LAYOUT_MINI)
-    st.plotly_chart(fig2, use_container_width=True)
+    fig4.update_layout(title="Top 10 by Qty Sold", xaxis=dict(**_GRID), **_MINI)
+    st.plotly_chart(fig4, use_container_width=True)
 
-st.plotly_chart(menu_profitability_scatter(menu_items), use_container_width=True)
+st.divider()
 
-# ── Sidebar filter ────────────────────────────────────────────────────────────
+# ── Category performance table ─────────────────────────────────────────────────
+section_header("Category Summary", help="Aggregate performance per category — items, revenue, and quantity sold.")
+
+cat_summary = (
+    menu_items.groupby("category", as_index=False)
+    .agg(
+        items=("name", "count"),
+        qty_sold=("quantity_sold", "sum"),
+        total_revenue=("total_revenue", "sum"),
+        avg_price=("price", "mean"),
+    )
+    .sort_values("total_revenue", ascending=False)
+)
+cat_summary["revenue_share"] = (cat_summary["total_revenue"] / cat_summary["total_revenue"].sum() * 100).round(1)
+cat_display = cat_summary.copy()
+cat_display["total_revenue"] = cat_display["total_revenue"].apply(lambda x: f"${x:,.0f}")
+cat_display["avg_price"]     = cat_display["avg_price"].apply(lambda x: f"${x:.2f}")
+cat_display["revenue_share"] = cat_display["revenue_share"].apply(lambda x: f"{x:.1f}%")
+cat_display["qty_sold"]      = cat_display["qty_sold"].apply(lambda x: f"{x:,}")
+cat_display.columns = ["Category", "# Items", "Qty Sold", "Total Revenue", "Avg Price", "Revenue Share"]
+st.dataframe(cat_display, use_container_width=True, hide_index=True)
+
+st.divider()
+
+# ── Pareto / concentration ─────────────────────────────────────────────────────
+section_header("Revenue Concentration", help="Cumulative revenue share by item — shows how many items drive most of your sales.")
+
+pareto = menu_items[["name", "total_revenue"]].sort_values("total_revenue", ascending=False).reset_index(drop=True)
+pareto["cumulative_pct"] = (pareto["total_revenue"].cumsum() / pareto["total_revenue"].sum() * 100).round(1)
+pareto["rank"] = range(1, len(pareto) + 1)
+
+fig5 = go.Figure()
+fig5.add_trace(go.Bar(
+    x=pareto["rank"], y=pareto["total_revenue"],
+    name="Item Revenue", marker_color="#3498db", marker_line_width=0,
+))
+fig5.add_trace(go.Scatter(
+    x=pareto["rank"], y=pareto["cumulative_pct"],
+    name="Cumulative %", yaxis="y2",
+    line=dict(color="#FF6B35", width=2), mode="lines",
+))
+fig5.update_layout(
+    plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+    font=dict(color="rgba(240,242,246,0.75)"),
+    margin=dict(l=0, r=0, t=20, b=0),
+    legend=dict(orientation="h", y=1.08),
+    xaxis=dict(title="Item Rank", gridcolor="rgba(255,255,255,0.06)"),
+    yaxis=dict(title="Revenue ($)", tickprefix="$", gridcolor="rgba(255,255,255,0.06)"),
+    yaxis2=dict(title="Cumulative %", ticksuffix="%", overlaying="y", side="right",
+                range=[0, 105], showgrid=False),
+    shapes=[dict(type="line", x0=0, x1=len(pareto), y0=80, y1=80,
+                 yref="y2", line=dict(color="rgba(255,107,53,0.4)", width=1, dash="dash"))],
+)
+st.plotly_chart(fig5, use_container_width=True)
+st.caption("Dashed line = 80% revenue threshold (Pareto principle).")
+
+st.divider()
+
+# ── Sidebar filter ──────────────────────────────────────────────────────────────
 with st.sidebar:
     st.header("Filters")
     categories    = sorted(menu_items["category"].unique())
     selected_cats = st.multiselect("Category", categories, default=categories)
 
-# ── Menu detail table ─────────────────────────────────────────────────────────
-st.divider()
-section_header("Menu Item Profitability Detail", help="Full breakdown per menu item: unit price, total quantity sold, and total revenue generated in the period. Unit Cost and Margin % require recipe costing to be configured in Toast.")
+# ── Full item detail table ─────────────────────────────────────────────────────
+section_header("Item Detail", help="Full item list — filter by category in the sidebar. Click column headers to sort.")
+
 display = menu_items[menu_items["category"].isin(selected_cats)].copy()
+display["revenue_rank"] = display["total_revenue"].rank(ascending=False, method="min").astype(int)
+display["qty_rank"]     = display["quantity_sold"].rank(ascending=False, method="min").astype(int)
+display["rev_share"]    = (display["total_revenue"] / menu_items["total_revenue"].sum() * 100).round(2)
 
-# Derive unit cost — will be $0 if Toast recipe costing is not configured
-display["unit_cost"] = (
-    display["total_cost"] / display["quantity_sold"].replace(0, float("nan"))
-).fillna(0)
+display_fmt = display[["name", "category", "price", "quantity_sold", "total_revenue", "rev_share", "revenue_rank"]].copy()
+display_fmt["price"]         = display_fmt["price"].apply(lambda x: f"${x:.2f}")
+display_fmt["total_revenue"] = display_fmt["total_revenue"].apply(lambda x: f"${x:,.0f}")
+display_fmt["rev_share"]     = display_fmt["rev_share"].apply(lambda x: f"{x:.2f}%")
+display_fmt["quantity_sold"] = display_fmt["quantity_sold"].apply(lambda x: f"{x:,}")
+display_fmt.columns = ["Item", "Category", "Price", "Qty Sold", "Total Revenue", "Rev Share", "Rev Rank"]
+display_fmt = display_fmt.sort_values("Rev Rank")
 
-display["price"]         = display["price"].apply(lambda x: f"${x:.2f}" if x == x else "—")
-display["unit_cost"]     = display["unit_cost"].apply(lambda x: f"${x:.2f}" if x > 0 else "—")
-display["total_revenue"] = display["total_revenue"].apply(lambda x: f"${x:,.0f}")
-display["total_cost"]    = display["total_cost"].apply(lambda x: f"${x:,.0f}" if x > 0 else "—")
-display["gross_profit"]  = display["gross_profit"].apply(lambda x: f"${x:,.0f}")
-display["margin_pct"]    = display["margin_pct"].apply(lambda x: f"{x:.1f}%" if x == x else "—")
-display = display[["name","category","price","unit_cost","margin_pct","quantity_sold",
-                    "total_revenue","total_cost","gross_profit"]]
-display.columns = ["Item","Category","Price","Unit Cost","Margin %","Qty Sold",
-                   "Total Revenue","Total Cost","Gross Profit"]
-st.dataframe(display, use_container_width=True, height=420, hide_index=True)
-
-if (menu_items["total_cost"] == 0).all():
-    st.info(
-        "💡 **Unit costs show $0** because Toast's recipe costing is not configured. "
-        "To see accurate food cost per item, set up Menu Engineering in your Toast account "
-        "(Menu → Menu Engineering → add ingredient costs)."
-    )
+st.dataframe(display_fmt, use_container_width=True, height=480, hide_index=True)
 
 st.divider()
 st.caption("Confidential  ·  For authorised recipients only")
