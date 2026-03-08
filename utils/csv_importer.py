@@ -319,9 +319,7 @@ def parse_paychex_labor_cost(raw: bytes, filename: str = "") -> tuple:
 
     # Overtime: hours > 40 in a week = overtime
     df["overtime_hours"] = (df["total_hours"] - 40).clip(lower=0).round(4)
-    df["regular_hours"]  = df[["total_hours", df.columns.tolist().index("overtime_hours") if "overtime_hours" in df.columns else "total_hours"]].apply(
-        lambda r: min(r["total_hours"], 40), axis=1
-    ).round(4)
+    df["regular_hours"]  = (df["total_hours"] - df["overtime_hours"]).round(4)
 
     # ── weekly_payroll ────────────────────────────────────────────────────────
     wp = df[[

@@ -11,10 +11,14 @@ from components.theme import page_header, section_header
 from data import database as db
 from utils.oauth_quickbooks import is_configured as qb_secrets_configured
 
-user       = st.session_state["user"]
-username   = user["username"]
+username   = st.session_state["user"]["username"]
 start_date = st.session_state.get("start_date")
 end_date   = st.session_state.get("end_date")
+
+# Always reload user from DB so QB status reflects the latest stored credentials
+# (token rotation during syncs can update DB without updating session state)
+user = db.get_user(username)
+st.session_state["user"] = user
 
 _qb_connected = bool(user.get("qb_realm_id") and user.get("qb_refresh_token"))
 
@@ -41,7 +45,7 @@ with _qb_col:
         if _rc1.button("Reconnect", key="qb_reconnect", use_container_width=True):
             st.session_state["_qb_action"] = "reconnect"
         if _rc2.button("Disconnect", key="qb_disconnect", use_container_width=True):
-            st.session_state["_qb_action"] = "disconnect"
+            st.session_state["_qb_confirm_disconnect"] = True
     else:
         st.markdown(
             "<span style='background:rgba(231,76,60,0.12);border:1px solid rgba(231,76,60,0.35);"
@@ -53,6 +57,16 @@ with _qb_col:
         if qb_secrets_configured():
             if st.button("Connect QuickBooks", key="qb_connect", use_container_width=True):
                 st.session_state["_qb_action"] = "connect"
+
+if st.session_state.get("_qb_confirm_disconnect"):
+    st.warning("Are you sure you want to disconnect QuickBooks? This will remove your connection.")
+    _cd1, _cd2, _ = st.columns([1, 1, 3])
+    if _cd1.button("Yes, disconnect", key="qb_disconnect_confirm", type="primary"):
+        st.session_state.pop("_qb_confirm_disconnect", None)
+        st.session_state["_qb_action"] = "disconnect"
+    if _cd2.button("Cancel", key="qb_disconnect_cancel"):
+        st.session_state.pop("_qb_confirm_disconnect", None)
+        st.rerun()
 
 # ── Handle QB actions ─────────────────────────────────────────────────────────
 _qb_action = st.session_state.pop("_qb_action", None)

@@ -282,20 +282,25 @@ def init_db() -> None:
     _tables_to_wipe = ["daily_sales", "hourly_sales", "menu_items",
                        "daily_labor", "weekly_payroll", "expenses", "cash_flow"]
     try:
-        with engine.begin() as conn:
-            rows = conn.execute(text(
+        with engine.connect() as _conn:
+            _pending = _conn.execute(text(
                 "SELECT username FROM users WHERE sim_fallback_cleared = FALSE"
             )).fetchall()
-            for (uname,) in rows:
-                for _tbl in _tables_to_wipe:
-                    conn.execute(text(f"DELETE FROM {_tbl} WHERE username = :u"), {"u": uname})
-                conn.execute(text(
-                    "UPDATE users SET sim_fallback_cleared = TRUE, "
-                    "last_sync_at = NULL, last_sync_status = NULL "
-                    "WHERE username = :u"
-                ), {"u": uname})
+        # Each user in its own transaction so one failure doesn't roll back others
+        for (_uname,) in _pending:
+            try:
+                with engine.begin() as conn:
+                    for _tbl in _tables_to_wipe:
+                        conn.execute(text(f"DELETE FROM {_tbl} WHERE username = :u"), {"u": _uname})
+                    conn.execute(text(
+                        "UPDATE users SET sim_fallback_cleared = TRUE, "
+                        "last_sync_at = NULL, last_sync_status = NULL "
+                        "WHERE username = :u"
+                    ), {"u": _uname})
+            except Exception:
+                pass  # will retry on next startup for this user only
     except Exception:
-        pass  # non-fatal — will retry next startup
+        pass  # non-fatal if we can't read the pending list
 
     # ── Step 3: Composite PKs (each in its own transaction) ───────────────────
     for tbl, pk_cols in _TABLE_PKS.items():
