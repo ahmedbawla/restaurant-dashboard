@@ -60,7 +60,7 @@ if daily_sales.empty:
         _render_toast_sales_upload()
     st.stop()
 
-with st.expander("📤 Update Toast Sales Data", expanded=False):
+with st.expander("Update Toast Sales Data", expanded=False):
     _render_toast_sales_upload()
 
 # ── Period-over-period ────────────────────────────────────────────────────────

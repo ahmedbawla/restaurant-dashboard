@@ -53,7 +53,7 @@ if menu_items.empty:
     _render_toast_menu_upload()
     st.stop()
 
-with st.expander("📤 Update Toast Menu Data", expanded=False):
+with st.expander("Update Toast Menu Data", expanded=False):
     _render_toast_menu_upload()
 
 # ── KPI strip ─────────────────────────────────────────────────────────────────

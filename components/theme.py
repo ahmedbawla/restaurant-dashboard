@@ -61,8 +61,16 @@ def apply_professional_theme() -> None:
         font-size: 0.95rem !important;
         color: rgba(240,242,246,0.9) !important;
     }
-    p, li, span, div {
+    p, li, label {
         font-family: 'Inter', sans-serif !important;
+    }
+
+    /* Preserve Material Icons font used by Streamlit's UI chrome */
+    [data-testid="collapsedControl"],
+    [data-testid="collapsedControl"] *,
+    [data-testid="stExpander"] summary svg,
+    .material-icons, [class*="material-icon"] {
+        font-family: inherit;
     }
 
     /* ── Metric cards ───────────────────────────────────────────────── */

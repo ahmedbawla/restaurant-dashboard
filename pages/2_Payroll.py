@@ -89,7 +89,7 @@ if daily_labor.empty or weekly_payroll.empty:
     _render_paychex_upload()
     st.stop()
 
-with st.expander("📤 Update Paychex Data", expanded=False):
+with st.expander("Update Paychex Data", expanded=False):
     _render_paychex_upload()
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
