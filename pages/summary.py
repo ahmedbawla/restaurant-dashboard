@@ -39,10 +39,11 @@ page_header(
 
 # ── Load all data ─────────────────────────────────────────────────────────────
 kpi         = db.get_kpi_today(username, as_of_date=end_date)
-daily_sales = db.get_daily_sales(username,  start_date=start_date, end_date=end_date)
-daily_labor = db.get_daily_labor(username,  start_date=start_date, end_date=end_date)
-expenses    = db.get_expenses(username,     start_date=start_date, end_date=end_date)
-menu_items  = db.get_menu_items(username)
+daily_sales    = db.get_daily_sales(username,    start_date=start_date, end_date=end_date)
+daily_labor    = db.get_daily_labor(username,    start_date=start_date, end_date=end_date)
+weekly_payroll = db.get_weekly_payroll(username, start_date=start_date, end_date=end_date)
+expenses       = db.get_expenses(username,       start_date=start_date, end_date=end_date)
+menu_items     = db.get_menu_items(username)
 
 has_sales    = not daily_sales.empty
 has_labor    = not daily_labor.empty
@@ -125,36 +126,39 @@ if has_sales and kpi:
     _kpi_rev       = kpi["revenue"]
     _kpi_covers    = kpi["covers"]
     _kpi_avg_check = kpi["avg_check"]
-    _kpi_labor_pct = kpi["labor_cost_pct"]   # 0 if no labor data — we gate on has_labor
-    _kpi_labor_hrs = float(
-        daily_labor[daily_labor["date"] == _kpi_date]["hours"].sum()
-    ) if has_labor else 0.0
-    _kpi_rev_per_hr = _kpi_rev / _kpi_labor_hrs if _kpi_labor_hrs else None
+
+    # Only use day-level labour if that specific date has actual data (hours > 0)
+    _day_labor_row = daily_labor[daily_labor["date"] == _kpi_date] if has_labor else None
+    _kpi_labor_hrs  = float(_day_labor_row["hours"].sum())      if (_day_labor_row is not None and not _day_labor_row.empty) else 0.0
+    _kpi_labor_cost = float(_day_labor_row["labor_cost"].sum()) if (_day_labor_row is not None and not _day_labor_row.empty) else 0.0
+    _kpi_has_day_labor = _kpi_labor_hrs > 0
+
+    _kpi_labor_pct  = _kpi_labor_cost / _kpi_rev * 100 if (_kpi_has_day_labor and _kpi_rev) else None
+    _kpi_rev_per_hr = _kpi_rev / _kpi_labor_hrs         if _kpi_has_day_labor else None
 
     section_header(
         f"Most Recent Day — {_kpi_date}",
         help="KPIs for the most recent date in your dataset.",
     )
-    c1, c2, c3, c4, c5 = st.columns(5)
-    with c1:
-        st.metric("Daily Revenue",   format_currency(_kpi_rev))
-    with c2:
-        st.metric("Guest Covers",    f"{_kpi_covers:,}")
-    with c3:
-        st.metric("Avg. Check",      format_currency(_kpi_avg_check))
-    with c4:
-        if has_labor:
+
+    if _kpi_has_day_labor:
+        c1, c2, c3, c4, c5 = st.columns(5)
+        with c4:
             st.metric("Labour %",
                       threshold_badge(_kpi_labor_pct, LABOR_TARGET, LABOR_WARNING),
                       help="Labour cost as % of revenue for the day.")
-        else:
-            st.metric("Labour %", "—", help="Upload Payroll data to see labour %.")
-    with c5:
-        if _kpi_rev_per_hr:
+        with c5:
             st.metric("Rev / Labour Hr", format_currency(_kpi_rev_per_hr),
                       help="Revenue generated per hour worked on this day.")
-        else:
-            st.metric("Rev / Labour Hr", "—", help="Upload Payroll data to calculate.")
+    else:
+        c1, c2, c3 = st.columns(3)
+
+    with c1:
+        st.metric("Daily Revenue", format_currency(_kpi_rev))
+    with c2:
+        st.metric("Guest Covers",  f"{_kpi_covers:,}")
+    with c3:
+        st.metric("Avg. Check",    format_currency(_kpi_avg_check))
 
     st.divider()
 
@@ -289,6 +293,38 @@ if has_labor:
             fig_lp.update_xaxes(gridcolor="rgba(255,255,255,0.04)")
             fig_lp.update_layout(**_LAYOUT, title="Daily Labour % of Revenue")
             st.plotly_chart(fig_lp, use_container_width=True)
+
+    # Payroll summary table
+    if not weekly_payroll.empty:
+        _wp_cols = [c for c in ["employee_name", "dept", "role", "employment_type",
+                                 "regular_hours", "overtime_hours", "total_hours", "gross_pay"]
+                    if c in weekly_payroll.columns]
+        _wp_sum = (
+            weekly_payroll[_wp_cols]
+            .groupby(["employee_name", "dept", "role", "employment_type"], as_index=False)
+            .agg(
+                regular_hours =("regular_hours",  "sum"),
+                overtime_hours=("overtime_hours", "sum"),
+                total_hours   =("total_hours",    "sum"),
+                gross_pay     =("gross_pay",      "sum"),
+            )
+            if all(c in weekly_payroll.columns for c in ["regular_hours", "overtime_hours", "total_hours", "gross_pay"])
+            else weekly_payroll[_wp_cols].copy()
+        )
+        _wp_sum = _wp_sum.sort_values(["dept", "employee_name"])
+        _wp_display = _wp_sum.copy()
+        if "gross_pay"      in _wp_display.columns: _wp_display["gross_pay"]      = _wp_display["gross_pay"].apply(lambda x: f"${x:,.2f}")
+        if "regular_hours"  in _wp_display.columns: _wp_display["regular_hours"]  = _wp_display["regular_hours"].apply(lambda x: f"{x:.1f}")
+        if "overtime_hours" in _wp_display.columns: _wp_display["overtime_hours"] = _wp_display["overtime_hours"].apply(lambda x: f"{x:.1f}")
+        if "total_hours"    in _wp_display.columns: _wp_display["total_hours"]    = _wp_display["total_hours"].apply(lambda x: f"{x:.1f}")
+        _col_rename = {
+            "employee_name": "Employee", "dept": "Department", "role": "Role",
+            "employment_type": "Type", "regular_hours": "Reg Hrs",
+            "overtime_hours": "OT Hrs", "total_hours": "Total Hrs", "gross_pay": "Gross Pay",
+        }
+        _wp_display = _wp_display.rename(columns={k: v for k, v in _col_rename.items() if k in _wp_display.columns})
+        st.caption("**Payroll Summary — all weeks in selected period**")
+        st.dataframe(_wp_display, use_container_width=True, hide_index=True)
 
     st.divider()
 
