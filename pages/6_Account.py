@@ -355,6 +355,70 @@ if not qb_connected and "qb_connect_nonce" in st.session_state:
         from utils.oauth_quickbooks import get_auth_url as qb_auth_url
         st.code(qb_auth_url(username, st.session_state["qb_connect_nonce"]) if qb_secrets_configured() else "Secrets not configured")
 
+if qb_connected:
+    with st.expander("QuickBooks Diagnostics", expanded=False):
+        st.caption(
+            "Queries QuickBooks directly and shows how many transactions and what "
+            "total dollar amount each source returned for the last 90 days. "
+            "Use this to identify where data is missing."
+        )
+        if st.button("Run QB Diagnostics", key="qb_diag"):
+            from datetime import date, timedelta
+            from data.connectors.quickbooks_connector import QuickBooksConnector
+            _diag_conn = QuickBooksConnector({
+                "realm_id":      user["qb_realm_id"],
+                "refresh_token": user["qb_refresh_token"],
+                "username":      username,
+            })
+            _diag_end   = date.today()
+            _diag_start = _diag_end - timedelta(days=90)
+            _sd, _ed    = _diag_start.isoformat(), _diag_end.isoformat()
+
+            _diag_results = []
+
+            for _label, _sql in [
+                ("Purchase (credit card / check / cash)",
+                 f"SELECT * FROM Purchase WHERE TxnDate >= '{_sd}' AND TxnDate <= '{_ed}'"),
+                ("Bill (accounts payable invoices)",
+                 f"SELECT * FROM Bill WHERE TxnDate >= '{_sd}' AND TxnDate <= '{_ed}'"),
+                ("JournalEntry (payroll, depreciation, accruals)",
+                 f"SELECT * FROM JournalEntry WHERE TxnDate >= '{_sd}' AND TxnDate <= '{_ed}'"),
+            ]:
+                try:
+                    _txns  = _diag_conn._query_all(_sql)
+                    _count = len(_txns)
+                    _total = sum(float(t.get("TotalAmt", 0)) for t in _txns)
+                    _diag_results.append({
+                        "Source": _label,
+                        "Transactions": _count,
+                        "Total ($)": f"${_total:,.2f}",
+                    })
+                except Exception as _e:
+                    _diag_results.append({
+                        "Source": _label,
+                        "Transactions": "ERROR",
+                        "Total ($)": str(_e),
+                    })
+
+            # Pending bank feed (requires banking scope)
+            try:
+                _pending_df = _diag_conn.get_pending_bank_transactions(_diag_start, _diag_end)
+                _diag_results.append({
+                    "Source":        "Pending bank feed (For Review)",
+                    "Transactions":  len(_pending_df),
+                    "Total ($)":     f"${_pending_df['amount'].sum():,.2f}" if not _pending_df.empty else "$0.00",
+                })
+            except Exception as _e:
+                _diag_results.append({
+                    "Source":       "Pending bank feed (For Review)",
+                    "Transactions": "ERROR",
+                    "Total ($)":    str(_e),
+                })
+
+            import pandas as _dpd
+            st.dataframe(_dpd.DataFrame(_diag_results), use_container_width=True, hide_index=True)
+            st.caption(f"Date range: {_sd} → {_ed}  ·  TotalAmt is the transaction-level total, not line-item sum.")
+
 st.divider()
 
 # ── Account Info ──────────────────────────────────────────────────────────────
