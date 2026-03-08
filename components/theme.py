@@ -30,9 +30,9 @@ def apply_professional_theme() -> None:
         background: transparent !important;
     }
     .block-container {
-        padding-top: 1.4rem !important;
+        padding-top: 1.2rem !important;
         padding-bottom: 2rem !important;
-        max-width: 1280px;
+        max-width: 1200px;
     }
 
     /* ── Typography ─────────────────────────────────────────────────── */
@@ -40,16 +40,16 @@ def apply_professional_theme() -> None:
         font-family: 'Inter', sans-serif !important;
         font-weight: 800 !important;
         letter-spacing: -0.8px !important;
-        font-size: 1.9rem !important;
+        font-size: 2rem !important;
         color: #f0f2f6 !important;
     }
     h2 {
         font-family: 'Inter', sans-serif !important;
-        font-weight: 700 !important;
-        font-size: 1rem !important;
+        font-weight: 600 !important;
+        font-size: 1.1rem !important;
         text-transform: uppercase !important;
-        letter-spacing: 1.5px !important;
-        color: rgba(240,242,246,0.6) !important;
+        letter-spacing: 1.2px !important;
+        color: rgba(240,242,246,0.75) !important;
         border-bottom: 1px solid rgba(255,107,53,0.15);
         padding-bottom: 8px;
         margin-top: 1.8rem !important;
@@ -68,26 +68,26 @@ def apply_professional_theme() -> None:
     /* ── Metric cards ───────────────────────────────────────────────── */
     [data-testid="metric-container"] {
         background: rgba(255,255,255,0.04) !important;
-        border: 1px solid rgba(255,255,255,0.08) !important;
-        border-radius: 14px !important;
-        padding: 1.1rem 1.3rem !important;
-        transition: border-color 0.25s, box-shadow 0.25s;
+        border: 1px solid rgba(255,255,255,0.07) !important;
+        border-radius: 12px !important;
+        padding: 1rem 1.2rem !important;
+        transition: border-color 0.2s, box-shadow 0.2s;
         backdrop-filter: blur(8px);
     }
     [data-testid="metric-container"]:hover {
-        border-color: rgba(255,107,53,0.45) !important;
-        box-shadow: 0 0 24px rgba(255,107,53,0.12);
+        border-color: rgba(255,107,53,0.35) !important;
+        box-shadow: 0 0 18px rgba(255,107,53,0.10);
     }
     [data-testid="stMetricValue"] {
-        font-size: 1.9rem !important;
+        font-size: 1.85rem !important;
         font-weight: 800 !important;
-        letter-spacing: -0.8px !important;
+        letter-spacing: -0.8px;
         color: #f0f2f6 !important;
     }
     [data-testid="stMetricLabel"] {
-        font-size: 0.65rem !important;
+        font-size: 0.68rem !important;
         text-transform: uppercase !important;
-        letter-spacing: 2px !important;
+        letter-spacing: 1.8px !important;
         font-weight: 700 !important;
         color: rgba(255,107,53,0.85) !important;
     }
@@ -129,7 +129,7 @@ def apply_professional_theme() -> None:
     /* ── Buttons ────────────────────────────────────────────────────── */
     .stButton > button {
         font-family: 'Inter', sans-serif !important;
-        border-radius: 9px !important;
+        border-radius: 8px !important;
         font-weight: 600 !important;
         font-size: 0.85rem !important;
         transition: all 0.2s !important;
@@ -276,11 +276,11 @@ def apply_professional_theme() -> None:
     /* ── Health score badge ─────────────────────────────────────────── */
     .health-badge {
         display: inline-block;
-        padding: 4px 14px;
+        padding: 4px 12px;
         border-radius: 20px;
-        font-size: 0.75rem;
+        font-size: 0.78rem;
         font-weight: 700;
-        letter-spacing: 0.5px;
+        letter-spacing: 1px;
         text-transform: uppercase;
     }
     .health-good    { background: rgba(46,204,113,0.12);  color: #2ecc71; border: 1px solid rgba(46,204,113,0.3); }
