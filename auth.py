@@ -180,8 +180,16 @@ def require_auth() -> dict:
 def render_sidebar_logout() -> None:
     """Display restaurant name, username, and logout button in the sidebar."""
     with st.sidebar:
+        st.markdown("""
+        <div style="padding:0.6rem 0 0.3rem 0;">
+            <span style="font-size:1.25rem;font-weight:900;letter-spacing:-0.5px;
+                background:linear-gradient(135deg,#FF6B35,#FF4B4B);
+                -webkit-background-clip:text;-webkit-text-fill-color:transparent;
+                background-clip:text;">TableMetrics</span>
+        </div>
+        """, unsafe_allow_html=True)
         user = st.session_state.get("user", {})
-        st.write(f"**{user.get('restaurant_name', '')}**")
+        st.markdown(f"<span style='font-size:0.9rem;font-weight:600;color:rgba(240,242,246,0.85);'>{user.get('restaurant_name', '')}</span>", unsafe_allow_html=True)
         st.caption(f"Logged in as `{user.get('username', '')}`")
         if st.button("Logout", use_container_width=True):
             for k in ["user", "_auth_screen"]:

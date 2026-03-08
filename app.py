@@ -21,7 +21,7 @@ from data.sync import sync_all, sync_simulated
 
 # ── Page config (must be first Streamlit call) ────────────────────────────────
 st.set_page_config(
-    page_title="Restaurant BI Dashboard",
+    page_title="TableMetrics",
     page_icon="🍽️",
     layout="wide",
     initial_sidebar_state="expanded",

@@ -8,23 +8,27 @@ import plotly.express as px
 import plotly.graph_objects as go
 
 
-_BRAND_COLOR = "#D4A84B"        # warm gold
-_PALETTE = px.colors.qualitative.Set2
+_BRAND_COLOR  = "#FF6B35"   # orange
+_BRAND_COLOR2 = "#FF4B4B"   # red
+_PALETTE = [
+    "#FF6B35", "#FF4B4B", "#3b82f6", "#a78bfa", "#34d399",
+    "#fb923c", "#f472b6", "#60a5fa", "#4ade80", "#facc15",
+]
 
-# Shared layout defaults for a clean dark look
+# Shared layout defaults for dark theme
 _LAYOUT = dict(
     plot_bgcolor="rgba(0,0,0,0)",
     paper_bgcolor="rgba(0,0,0,0)",
-    font=dict(color="rgba(240,242,246,0.75)", size=12),
-    title_font=dict(size=13, color="rgba(240,242,246,0.6)", family="sans-serif"),
+    font=dict(color="rgba(240,242,246,0.7)", size=12, family="Inter, sans-serif"),
+    title_font=dict(size=13, color="rgba(240,242,246,0.55)", family="Inter, sans-serif"),
     margin=dict(l=0, r=0, t=38, b=0),
     legend=dict(
         bgcolor="rgba(0,0,0,0)",
-        bordercolor="rgba(255,255,255,0.08)",
+        bordercolor="rgba(255,255,255,0.07)",
         borderwidth=1,
     ),
 )
-_GRID = dict(gridcolor="rgba(255,255,255,0.06)", zerolinecolor="rgba(255,255,255,0.08)")
+_GRID = dict(gridcolor="rgba(255,255,255,0.05)", zerolinecolor="rgba(255,255,255,0.07)")
 
 
 def revenue_trend(df: pd.DataFrame, days: int = 30) -> go.Figure:
@@ -38,12 +42,12 @@ def revenue_trend(df: pd.DataFrame, days: int = 30) -> go.Figure:
         name="Daily Revenue",
         fill="tozeroy",
         line=dict(color=_BRAND_COLOR, width=2),
-        fillcolor="rgba(212,168,75,0.10)",
+        fillcolor="rgba(255,107,53,0.10)",
     ))
     fig.add_trace(go.Scatter(
         x=data["date"], y=data["rolling_7"],
         name="7-Day Avg",
-        line=dict(color="#3498db", width=2, dash="dot"),
+        line=dict(color="#60a5fa", width=2, dash="dot"),
     ))
     fig.update_layout(
         title=f"Daily Revenue — Last {days} Days",
@@ -68,7 +72,7 @@ def expense_pie(df: pd.DataFrame) -> go.Figure:
     fig.update_traces(
         textposition="outside",
         textinfo="percent+label",
-        marker=dict(line=dict(color="#0f1117", width=2)),
+        marker=dict(line=dict(color="#0a0a0c", width=2)),
     )
     fig.update_layout(**_LAYOUT)
     return fig
@@ -107,7 +111,7 @@ def expense_trend_weekly(df: pd.DataFrame) -> go.Figure:
     fig = go.Figure()
     fig.add_trace(go.Bar(
         x=weekly["week_label"], y=weekly["amount"],
-        name="Weekly Spend", marker_color="#5b9bd5", marker_line_width=0,
+        name="Weekly Spend", marker_color="rgba(255,107,53,0.6)", marker_line_width=0,
     ))
     fig.add_trace(go.Scatter(
         x=weekly["week_label"], y=weekly["rolling_4w"],
@@ -166,12 +170,12 @@ def labor_trend(daily_labor: pd.DataFrame, daily_sales: pd.DataFrame) -> go.Figu
     fig = go.Figure()
     fig.add_trace(go.Bar(
         x=merged["date"], y=merged["revenue"],
-        name="Revenue", marker_color="rgba(52,152,219,0.25)",
+        name="Revenue", marker_color="rgba(255,107,53,0.20)",
         marker_line_width=0, yaxis="y2",
     ))
     fig.add_trace(go.Scatter(
         x=merged["date"], y=merged["labor_pct"],
-        name="Labor %", line=dict(color="#e74c3c", width=2),
+        name="Labor %", line=dict(color="#FF4B4B", width=2),
     ))
     fig.add_hline(y=30, line_dash="dash", line_color="rgba(255,255,255,0.25)",
                   annotation_text="Target 30%",
@@ -227,8 +231,8 @@ def food_cost_trend(daily_sales: pd.DataFrame) -> go.Figure:
     fig.add_trace(go.Scatter(
         x=ds["date"], y=ds["food_cost_pct"],
         name="Food Cost %", fill="tozeroy",
-        line=dict(color="#3498db", width=1.5),
-        fillcolor="rgba(52,152,219,0.10)",
+        line=dict(color="#60a5fa", width=1.5),
+        fillcolor="rgba(96,165,250,0.08)",
     ))
     fig.add_trace(go.Scatter(
         x=ds["date"], y=ds["rolling_7"],
@@ -290,7 +294,7 @@ def hourly_heatmap(hourly_sales: pd.DataFrame) -> go.Figure:
         z=pivot.values,
         x=[f"{h}:00" for h in pivot.columns],
         y=pivot.index.tolist(),
-        colorscale=[[0, "#13151f"], [0.5, "#d4a84b"], [1, "#e74c3c"]],
+        colorscale=[[0, "#0a0a0c"], [0.5, "#FF6B35"], [1, "#FF4B4B"]],
         colorbar=dict(title="Avg Covers", tickfont=dict(color="rgba(240,242,246,0.6)")),
     ))
     fig.update_layout(
@@ -333,7 +337,7 @@ def avg_check_trend(daily_sales: pd.DataFrame) -> go.Figure:
     fig.add_trace(go.Scatter(
         x=ds["date"], y=ds["avg_check"],
         name="Avg Check", line=dict(color=_BRAND_COLOR, width=2),
-        fill="tozeroy", fillcolor="rgba(212,168,75,0.07)",
+        fill="tozeroy", fillcolor="rgba(255,107,53,0.08)",
     ))
     fig.add_trace(go.Scatter(
         x=ds["date"], y=ds["rolling_7"],
@@ -360,7 +364,7 @@ def covers_by_dow(daily_sales: pd.DataFrame) -> go.Figure:
     fig = go.Figure()
     fig.add_trace(go.Bar(
         x=day_avg["day"], y=day_avg["covers"],
-        name="Avg Covers", marker_color="#9b59b6", marker_line_width=0,
+        name="Avg Covers", marker_color="rgba(167,139,250,0.7)", marker_line_width=0,
     ))
     fig.add_trace(go.Scatter(
         x=day_avg["day"], y=day_avg["revenue"],
@@ -384,7 +388,7 @@ def revenue_by_dow(daily_sales: pd.DataFrame) -> go.Figure:
     df["day"] = df["date"].dt.day_name()
     df["day_num"] = df["date"].dt.dayofweek
     day_sum = df.groupby(["day", "day_num"])["revenue"].sum().reset_index().sort_values("day_num")
-    colors = [_BRAND_COLOR if v == day_sum["revenue"].max() else "rgba(212,168,75,0.4)"
+    colors = [_BRAND_COLOR if v == day_sum["revenue"].max() else "rgba(255,107,53,0.35)"
               for v in day_sum["revenue"]]
     fig = go.Figure(go.Bar(
         x=day_sum["day"], y=day_sum["revenue"],
@@ -410,8 +414,8 @@ def revenue_per_cover_trend(daily_sales: pd.DataFrame) -> go.Figure:
     fig = go.Figure()
     fig.add_trace(go.Scatter(
         x=ds["date"], y=ds["rev_per_cover"],
-        name="Rev / Cover", line=dict(color="#2ecc71", width=1.5),
-        fill="tozeroy", fillcolor="rgba(46,204,113,0.07)",
+        name="Rev / Cover", line=dict(color="#34d399", width=1.5),
+        fill="tozeroy", fillcolor="rgba(52,211,153,0.07)",
     ))
     fig.add_trace(go.Scatter(
         x=ds["date"], y=ds["rolling_7"],
