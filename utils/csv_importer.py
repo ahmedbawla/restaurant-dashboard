@@ -70,9 +70,10 @@ def parse_sales_summary(raw: bytes, filename: str = "") -> pd.DataFrame:
     df = df.dropna(how="all")
 
     col_map = {
-        "date":          ["Date", "Business Date", "date", "business_date"],
-        "covers":        ["Covers", "Guests", "Guest Count", "covers", "guests"],
-        "revenue":       ["Net Sales", "Gross Sales", "Total Net Sales",
+        "date":          ["yyyyMMdd", "Date", "Business Date", "date", "business_date"],
+        "covers":        ["Total guests", "Covers", "Guests", "Guest Count",
+                          "covers", "guests", "total_guests"],
+        "revenue":       ["Net sales", "Net Sales", "Gross Sales", "Total Net Sales",
                           "Net Revenue", "revenue", "net_sales"],
         "avg_check":     ["Average Check", "Avg Check", "Check Average",
                           "avg_check", "average_check"],
@@ -89,8 +90,15 @@ def parse_sales_summary(raw: bytes, filename: str = "") -> pd.DataFrame:
 
     df = df[needed].copy()
 
-    # Coerce types
-    df["date"]          = pd.to_datetime(df["date"], errors="coerce").dt.strftime("%Y-%m-%d")
+    # Parse date — handles YYYYMMDD (Toast default), MM/DD/YYYY, ISO, etc.
+    def _parse_date(val):
+        s = str(val).strip()
+        # Toast yyyyMMdd integer format
+        if s.isdigit() and len(s) == 8:
+            return pd.to_datetime(s, format="%Y%m%d", errors="coerce")
+        return pd.to_datetime(s, infer_datetime_format=True, errors="coerce")
+
+    df["date"]          = df["date"].apply(_parse_date).dt.strftime("%Y-%m-%d")
     df["covers"]        = _clean_currency(df["covers"]).astype(int)
     df["revenue"]       = _clean_currency(df["revenue"])
     df["avg_check"]     = _clean_currency(df["avg_check"])
@@ -186,9 +194,10 @@ def parse_hourly_sales(raw: bytes, filename: str = "") -> pd.DataFrame:
 
     col_map = {
         "date":    ["Date", "Business Date", "date", "business_date"],
-        "hour":    ["Hour", "Time", "Hour of Day", "hour", "time"],
-        "covers":  ["Covers", "Guests", "covers", "guests"],
-        "revenue": ["Net Sales", "Gross Sales", "revenue", "net_sales"],
+        "hour":    ["Hour", "Time", "Hour of Day", "Hour of day",
+                    "hour", "time", "hour_of_day"],
+        "covers":  ["Total guests", "Covers", "Guests", "covers", "guests"],
+        "revenue": ["Net sales", "Net Sales", "Gross Sales", "revenue", "net_sales"],
     }
     df = _normalise(df, col_map)
 
