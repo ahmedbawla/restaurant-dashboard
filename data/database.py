@@ -475,6 +475,32 @@ def clear_user_data(username: str) -> None:
     update_user(username, last_sync_at=None, last_sync_status=None)
 
 
+def merge_df(df: pd.DataFrame, table: str, username: str,
+             date_col: str = "date") -> int:
+    """
+    Merge uploaded data into a table without wiping other dates.
+
+    Deletes only the rows whose dates appear in df, then inserts df.
+    This lets users upload Jan data then Feb data and keep both.
+    For menu_items (no date column), pass date_col=None to do a full replace.
+    """
+    df = df.copy()
+    df["username"] = username
+    engine = get_engine()
+    with engine.begin() as conn:
+        if date_col and date_col in df.columns:
+            dates = df[date_col].dropna().unique().tolist()
+            conn.execute(
+                text(f"DELETE FROM {table} WHERE username = :u AND {date_col} = ANY(:d)"),
+                {"u": username, "d": dates},
+            )
+        else:
+            # No date dimension (e.g. menu_items) — replace all
+            conn.execute(text(f"DELETE FROM {table} WHERE username = :u"), {"u": username})
+        df.to_sql(table, conn, if_exists="append", index=False)
+    return len(df)
+
+
 def upsert_df(df: pd.DataFrame, table: str, username: str) -> int:
     """Delete user's existing rows then append new rows (full per-user refresh)."""
     df = df.copy()

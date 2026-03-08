@@ -31,12 +31,6 @@ apply_professional_theme()
 # ── Run DB migrations on every startup (idempotent) ──────────────────────────
 db.init_db()
 
-# ── Pre-install Playwright Chromium at startup (no-op if already cached) ─────
-try:
-    from data.scrapers.toast_scraper import ensure_browser_installed
-    ensure_browser_installed()
-except Exception:
-    pass  # Non-fatal — scraper will surface a clear error if browser is missing
 
 # ── QuickBooks OAuth callback ─────────────────────────────────────────────────
 # Intuit redirects back with ?code=...&state=...&realmId=...

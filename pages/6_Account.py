@@ -183,85 +183,102 @@ with st.container(border=True):
 
 # ── Toast POS ─────────────────────────────────────────────────────────────────
 with st.container(border=True):
-    col_logo, col_status, col_action = st.columns([1, 3, 2])
-    with col_logo:
-        st.markdown("**Toast POS**")
-        st.caption("Sales & Labor")
-    with col_status:
-        if toast_has_api_creds:
-            st.success(f"Connected — {user.get('toast_guid')}")
-        elif toast_has_portal_creds:
-            st.info(f"Credentials saved — {user.get('toast_username')}  ·  Not yet verified (syncs nightly)")
-        else:
-            st.warning("Not connected")
-    with col_action:
-        if toast_connected:
-            if st.button("Disconnect", key="toast_disconnect", use_container_width=True):
-                db.update_user(
-                    username,
-                    toast_username=None, toast_password_enc=None,
-                    toast_api_key=None, toast_client_secret=None, toast_guid=None,
-                )
-                user.update({
-                    "toast_username": None, "toast_password_enc": None,
-                    "toast_api_key": None, "toast_client_secret": None, "toast_guid": None,
-                })
-                if not _any_real_connector(user):
-                    db.update_user(username, use_simulated_data=True)
-                    user["use_simulated_data"] = True
-                st.session_state["user"] = user
-                st.cache_data.clear()
-                st.rerun()
+    st.markdown("**Toast POS** — Sales & Menu Data")
+    st.caption(
+        "Export CSVs from Toast: **Reports → Sales → Sales Summary → Export**, "
+        "**Reports → Menu → Item Selections → Export**, "
+        "and optionally **Reports → Sales → Sales by Hour → Export**. "
+        "You can upload any date range — uploads accumulate (uploading Feb data keeps Jan data)."
+    )
 
-    if not toast_connected:
-        with st.form("toast_connect_form"):
-            st.caption(
-                "Enter your **Toast POS login** (the same email and password you use "
-                "at pos.toasttab.com). Your password is stored encrypted."
-            )
-            t_col1, t_col2 = st.columns(2)
-            t_email    = t_col1.text_input("Toast Email")
-            t_password = t_col2.text_input("Toast Password", type="password")
-            toast_submit = st.form_submit_button("Connect Toast POS", use_container_width=True)
+    from utils.csv_importer import parse_sales_summary, parse_item_selections, parse_hourly_sales
 
-        if toast_submit:
-            if not (t_email.strip() and t_password.strip()):
-                st.error("Email and password are required.")
+    # ── Sales Summary ──────────────────────────────────────────────────────
+    st.markdown("**Sales Summary** *(required — drives all revenue KPIs)*")
+    sales_file = st.file_uploader(
+        "Upload Sales Summary CSV/Excel",
+        type=["csv", "xlsx"],
+        key="toast_sales_upload",
+    )
+    if sales_file:
+        try:
+            raw  = sales_file.read()
+            df_s = parse_sales_summary(raw, sales_file.name)
+            if df_s.empty:
+                st.error("No data rows found. Check that you exported the Sales Summary report.")
             else:
-                from utils.encryption import encrypt
-                from data.sync import sync_all as _sync_all
-                db.update_user(
-                    username,
-                    toast_username=t_email.strip(),
-                    toast_password_enc=encrypt(t_password),
-                    use_simulated_data=False,
+                st.success(
+                    f"Parsed **{len(df_s)} days** of sales  ·  "
+                    f"{df_s['date'].min()} → {df_s['date'].max()}"
                 )
-                user.update({
-                    "toast_username":     t_email.strip(),
-                    "toast_password_enc": encrypt(t_password),
-                    "use_simulated_data": False,
-                })
-                st.session_state["user"] = user
-                with st.spinner("Credentials saved — attempting to sync Toast data…"):
-                    _res = _sync_all(db.get_user(username))
-                _err  = _res.get("toast", {}).get("error")
-                _rows = _res.get("toast", {}).get("rows", 0)
-                if _err:
-                    st.session_state["_acct_flash"] = [
-                        {"type": "error",   "text": f"Toast sync failed: {_err}"},
-                        {"type": "warning", "text": "Credentials saved but login failed. The nightly sync will retry — check your email and password."},
-                    ]
-                elif _rows == 0:
-                    st.session_state["_acct_flash"] = [
-                        {"type": "warning", "text": "Toast credentials saved but no data was returned. Verify your account has sales data in the selected date range."},
-                    ]
-                else:
-                    st.session_state["_acct_flash"] = [
-                        {"type": "success", "text": f"Toast connected — {_rows} rows imported."},
-                    ]
-                st.session_state["user"] = db.get_user(username)
-                st.cache_data.clear()
-                st.rerun()
+                st.dataframe(df_s.head(5), use_container_width=True, hide_index=True)
+                if st.button("Import Sales Data", key="toast_sales_import", type="primary"):
+                    rows = db.merge_df(df_s, "daily_sales", username)
+                    db.update_user(username, use_simulated_data=False)
+                    st.session_state["user"] = db.get_user(username)
+                    st.cache_data.clear()
+                    st.success(f"Imported {rows} rows into Sales.")
+                    st.rerun()
+        except Exception as exc:
+            st.error(f"Could not parse file: {exc}")
+
+    st.divider()
+
+    # ── Item Selections ────────────────────────────────────────────────────
+    st.markdown("**Item Selections** *(menu & inventory analysis)*")
+    items_file = st.file_uploader(
+        "Upload Item Selections CSV/Excel",
+        type=["csv", "xlsx"],
+        key="toast_items_upload",
+    )
+    if items_file:
+        try:
+            raw  = items_file.read()
+            df_i = parse_item_selections(raw, items_file.name)
+            if df_i.empty:
+                st.error("No data rows found. Check that you exported the Item Selections report.")
+            else:
+                st.success(f"Parsed **{len(df_i)} menu items**")
+                st.dataframe(df_i.head(5), use_container_width=True, hide_index=True)
+                if st.button("Import Menu Data", key="toast_items_import", type="primary"):
+                    rows = db.merge_df(df_i, "menu_items", username, date_col=None)
+                    db.update_user(username, use_simulated_data=False)
+                    st.session_state["user"] = db.get_user(username)
+                    st.cache_data.clear()
+                    st.success(f"Imported {rows} menu items.")
+                    st.rerun()
+        except Exception as exc:
+            st.error(f"Could not parse file: {exc}")
+
+    st.divider()
+
+    # ── Sales by Hour ──────────────────────────────────────────────────────
+    st.markdown("**Sales by Hour** *(optional — powers the hourly heatmap)*")
+    hourly_file = st.file_uploader(
+        "Upload Sales by Hour CSV/Excel",
+        type=["csv", "xlsx"],
+        key="toast_hourly_upload",
+    )
+    if hourly_file:
+        try:
+            raw  = hourly_file.read()
+            df_h = parse_hourly_sales(raw, hourly_file.name)
+            if df_h.empty:
+                st.error("No data rows found. Check that you exported the Sales by Hour report.")
+            else:
+                st.success(
+                    f"Parsed **{len(df_h)} hourly rows**  ·  "
+                    f"{df_h['date'].min()} → {df_h['date'].max()}"
+                )
+                if st.button("Import Hourly Data", key="toast_hourly_import", type="primary"):
+                    rows = db.merge_df(df_h, "hourly_sales", username)
+                    db.update_user(username, use_simulated_data=False)
+                    st.session_state["user"] = db.get_user(username)
+                    st.cache_data.clear()
+                    st.success(f"Imported {rows} hourly rows.")
+                    st.rerun()
+        except Exception as exc:
+            st.error(f"Could not parse file: {exc}")
 
 # ── Paychex Flex ──────────────────────────────────────────────────────────────
 with st.container(border=True):
