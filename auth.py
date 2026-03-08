@@ -44,12 +44,13 @@ _BRAND_CSS = """
 
 /* ── Logo ── */
 .tm-logo {
-    font-size: 8rem; font-weight: 900; letter-spacing: -4px; line-height: 1;
+    font-size: clamp(4rem, 14vw, 13rem); font-weight: 900; letter-spacing: -0.02em; line-height: 1;
     background: linear-gradient(135deg, #FF6B35 0%, #FF4B4B 45%, #FF8C42 100%);
     -webkit-background-clip: text; -webkit-text-fill-color: transparent;
     background-clip: text; text-align: center;
-    margin-bottom: 0.5rem;
-    filter: drop-shadow(0 0 60px rgba(255,75,75,0.5));
+    margin: 0 0 0.5rem 0; padding: 0;
+    width: 100%;
+    filter: drop-shadow(0 0 80px rgba(255,75,75,0.55));
 }
 .tm-tagline {
     text-align: center; color: rgba(255,255,255,0.5);
@@ -200,9 +201,12 @@ def _center():
 
 def _landing():
     st.markdown("<div style='height:9vh'></div>", unsafe_allow_html=True)
+
+    # Logo rendered full-width so vw units actually scale
+    st.markdown('<div class="tm-eyebrow">Restaurant Intelligence Platform</div>', unsafe_allow_html=True)
+    st.markdown('<p class="tm-logo">TableMetrics</p>', unsafe_allow_html=True)
+
     with _center():
-        st.markdown('<div class="tm-eyebrow">Restaurant Intelligence Platform</div>', unsafe_allow_html=True)
-        st.markdown('<p class="tm-logo">TableMetrics</p>', unsafe_allow_html=True)
         st.markdown(
             '<p class="tm-tagline">Your numbers, at a glance. Every shift, every day.</p>',
             unsafe_allow_html=True,
