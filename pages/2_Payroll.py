@@ -35,9 +35,62 @@ daily_labor    = db.get_daily_labor(username,    start_date=start_date, end_date
 weekly_payroll = db.get_weekly_payroll(username, start_date=start_date, end_date=end_date)
 daily_sales    = db.get_daily_sales(username,    start_date=start_date, end_date=end_date)
 
+# ── Paychex upload ────────────────────────────────────────────────────────────
+def _render_paychex_upload():
+    from utils.csv_importer import parse_time_attendance, parse_payroll_register
+    st.markdown("**Upload Paychex Reports**")
+    st.caption(
+        "In Paychex Flex: Reports → Time & Attendance → export for daily labour cost.  \n"
+        "Reports → Payroll → Payroll Register → export for employee pay detail."
+    )
+    col_a, col_b = st.columns(2)
+    with col_a:
+        st.markdown("*Time & Attendance*")
+        ta_file = st.file_uploader(
+            "Time & Attendance", type=["csv", "xlsx"],
+            key="ta_upload", label_visibility="collapsed",
+        )
+    with col_b:
+        st.markdown("*Payroll Register*")
+        pr_file = st.file_uploader(
+            "Payroll Register", type=["csv", "xlsx"],
+            key="pr_upload", label_visibility="collapsed",
+        )
+
+    ta_df = pr_df = None
+    if ta_file:
+        try:
+            ta_df = parse_time_attendance(ta_file.getvalue(), ta_file.name)
+            st.success(f"Time & Attendance: {len(ta_df)} rows ({ta_df['date'].min()} → {ta_df['date'].max()})")
+        except Exception as e:
+            st.error(f"Time & Attendance parse error: {e}")
+    if pr_file:
+        try:
+            pr_df = parse_payroll_register(pr_file.getvalue(), pr_file.name)
+            st.success(f"Payroll Register: {len(pr_df)} employees across {pr_df['week_start'].nunique()} pay period(s).")
+        except Exception as e:
+            st.error(f"Payroll Register parse error: {e}")
+
+    if (ta_df is not None or pr_df is not None) and st.button(
+        "Import to Dashboard", key="paychex_import_btn", type="primary"
+    ):
+        if ta_df is not None:
+            db.merge_df(ta_df, "daily_labor", username, date_col="date")
+        if pr_df is not None:
+            db.merge_df(pr_df, "weekly_payroll", username, date_col="week_start")
+        db.update_user(username, use_simulated_data=False)
+        st.session_state["user"] = db.get_user(username)
+        st.cache_data.clear()
+        st.success("Paychex data imported. Refreshing…")
+        st.rerun()
+
 if daily_labor.empty or weekly_payroll.empty:
-    st.warning("No labour data found for the selected period.")
+    st.info("No payroll data yet. Upload your Paychex exports to get started.")
+    _render_paychex_upload()
     st.stop()
+
+with st.expander("📤 Update Paychex Data", expanded=False):
+    _render_paychex_upload()
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 with st.sidebar:

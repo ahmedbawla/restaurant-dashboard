@@ -9,14 +9,6 @@ from data import database as db
 from utils.oauth_quickbooks import is_configured as qb_secrets_configured
 
 
-def _any_real_connector(u: dict) -> bool:
-    """True if at least one integration still has live credentials."""
-    return bool(
-        (u.get("toast_api_key") and u.get("toast_client_secret") and u.get("toast_guid")) or
-        (u.get("paychex_client_id") and u.get("paychex_client_secret") and u.get("paychex_company_id")) or
-        (u.get("qb_realm_id") and u.get("qb_refresh_token"))
-    )
-
 user     = st.session_state["user"]
 username = user["username"]
 
@@ -112,16 +104,8 @@ st.divider()
 # ── Integrations ──────────────────────────────────────────────────────────────
 st.subheader("Integrations")
 
-qb_connected    = bool(user.get("qb_realm_id") and user.get("qb_refresh_token"))
-qb_has_banking  = bool(user.get("qb_banking_scope"))
-
-toast_has_api_creds    = bool(user.get("toast_api_key") and user.get("toast_client_secret") and user.get("toast_guid"))
-toast_has_portal_creds = bool(user.get("toast_username") and user.get("toast_password_enc"))
-toast_connected        = toast_has_api_creds or toast_has_portal_creds
-
-px_has_api_creds    = bool(user.get("paychex_client_id") and user.get("paychex_client_secret") and user.get("paychex_company_id"))
-px_has_portal_creds = bool(user.get("paychex_username") and user.get("paychex_password_enc"))
-px_connected        = px_has_api_creds or px_has_portal_creds
+qb_connected   = bool(user.get("qb_realm_id") and user.get("qb_refresh_token"))
+qb_has_banking = bool(user.get("qb_banking_scope"))
 
 # ── QuickBooks Online ─────────────────────────────────────────────────────────
 with st.container(border=True):
@@ -143,9 +127,6 @@ with st.container(border=True):
                                qb_banking_scope=False)
                 user.update({"qb_realm_id": None, "qb_refresh_token": None,
                              "qb_banking_scope": False})
-                if not _any_real_connector(user):
-                    db.update_user(username, use_simulated_data=True)
-                    user["use_simulated_data"] = True
                 st.session_state["user"] = user
                 st.cache_data.clear()
                 st.rerun()
@@ -185,187 +166,21 @@ with st.container(border=True):
 with st.container(border=True):
     st.markdown("**Toast POS** — Sales & Menu Data")
     st.caption(
-        "Export CSVs from Toast: **Reports → Sales → Sales Summary → Export**, "
-        "**Reports → Menu → Item Selections → Export**, "
-        "and optionally **Reports → Sales → Sales by Hour → Export**. "
-        "You can upload any date range — uploads accumulate (uploading Feb data keeps Jan data)."
+        "Upload Toast CSV exports directly on the **Sales** and **Inventory** pages "
+        "using the '📤 Update' buttons at the top of each page."
     )
-
-    from utils.csv_importer import parse_sales_summary, parse_item_selections, parse_hourly_sales
-
-    # ── Sales Summary ──────────────────────────────────────────────────────
-    st.markdown("**Sales Summary** *(required — drives all revenue KPIs)*")
-    sales_file = st.file_uploader(
-        "Upload Sales Summary CSV/Excel",
-        type=["csv", "xlsx"],
-        key="toast_sales_upload",
-    )
-    if sales_file:
-        try:
-            raw  = sales_file.read()
-            df_s = parse_sales_summary(raw, sales_file.name)
-            if df_s.empty:
-                st.error("No data rows found. Check that you exported the Sales Summary report.")
-            else:
-                st.success(
-                    f"Parsed **{len(df_s)} days** of sales  ·  "
-                    f"{df_s['date'].min()} → {df_s['date'].max()}"
-                )
-                st.dataframe(df_s.head(5), use_container_width=True, hide_index=True)
-                if st.button("Import Sales Data", key="toast_sales_import", type="primary"):
-                    rows = db.merge_df(df_s, "daily_sales", username)
-                    db.update_user(username, use_simulated_data=False)
-                    st.session_state["user"] = db.get_user(username)
-                    st.cache_data.clear()
-                    st.success(f"Imported {rows} rows into Sales.")
-                    st.rerun()
-        except Exception as exc:
-            st.error(f"Could not parse file: {exc}")
-
-    st.divider()
-
-    # ── Item Selections ────────────────────────────────────────────────────
-    st.markdown("**Item Selections** *(menu & inventory analysis)*")
-    items_file = st.file_uploader(
-        "Upload Item Selections CSV/Excel",
-        type=["csv", "xlsx"],
-        key="toast_items_upload",
-    )
-    if items_file:
-        try:
-            raw  = items_file.read()
-            df_i = parse_item_selections(raw, items_file.name)
-            if df_i.empty:
-                st.error("No data rows found. Check that you exported the Item Selections report.")
-            else:
-                st.success(f"Parsed **{len(df_i)} menu items**")
-                st.dataframe(df_i.head(5), use_container_width=True, hide_index=True)
-                if st.button("Import Menu Data", key="toast_items_import", type="primary"):
-                    rows = db.merge_df(df_i, "menu_items", username, date_col=None)
-                    db.update_user(username, use_simulated_data=False)
-                    st.session_state["user"] = db.get_user(username)
-                    st.cache_data.clear()
-                    st.success(f"Imported {rows} menu items.")
-                    st.rerun()
-        except Exception as exc:
-            st.error(f"Could not parse file: {exc}")
-
-    st.divider()
-
-    # ── Sales by Hour ──────────────────────────────────────────────────────
-    st.markdown("**Sales by Hour** *(optional — powers the hourly heatmap)*")
-    hourly_file = st.file_uploader(
-        "Upload Sales by Hour CSV/Excel",
-        type=["csv", "xlsx"],
-        key="toast_hourly_upload",
-    )
-    if hourly_file:
-        try:
-            raw  = hourly_file.read()
-            df_h = parse_hourly_sales(raw, hourly_file.name)
-            if df_h.empty:
-                st.error("No data rows found. Check that you exported the Sales by Hour report.")
-            else:
-                st.success(
-                    f"Parsed **{len(df_h)} hourly rows**  ·  "
-                    f"{df_h['date'].min()} → {df_h['date'].max()}"
-                )
-                if st.button("Import Hourly Data", key="toast_hourly_import", type="primary"):
-                    rows = db.merge_df(df_h, "hourly_sales", username)
-                    db.update_user(username, use_simulated_data=False)
-                    st.session_state["user"] = db.get_user(username)
-                    st.cache_data.clear()
-                    st.success(f"Imported {rows} hourly rows.")
-                    st.rerun()
-        except Exception as exc:
-            st.error(f"Could not parse file: {exc}")
+    tc1, tc2 = st.columns(2)
+    tc1.info("Sales data → **Sales** page")
+    tc2.info("Menu data → **Inventory** page")
 
 # ── Paychex Flex ──────────────────────────────────────────────────────────────
 with st.container(border=True):
-    col_logo, col_status, col_action = st.columns([1, 3, 2])
-    with col_logo:
-        st.markdown("**Paychex Flex**")
-        st.caption("Payroll & Labor")
-    with col_status:
-        if px_has_api_creds:
-            st.success(f"Connected — {user.get('paychex_company_id')}")
-        elif px_has_portal_creds:
-            st.info(f"Credentials saved — {user.get('paychex_username')}  ·  Not yet verified (syncs nightly)")
-        else:
-            st.warning("Not connected")
-    with col_action:
-        if px_connected:
-            if st.button("Disconnect", key="paychex_disconnect", use_container_width=True):
-                db.update_user(
-                    username,
-                    paychex_username=None, paychex_password_enc=None,
-                    paychex_client_id=None, paychex_client_secret=None, paychex_company_id=None,
-                )
-                user.update({
-                    "paychex_username": None, "paychex_password_enc": None,
-                    "paychex_client_id": None, "paychex_client_secret": None, "paychex_company_id": None,
-                })
-                if not _any_real_connector(user):
-                    db.update_user(username, use_simulated_data=True)
-                    user["use_simulated_data"] = True
-                st.session_state["user"] = user
-                st.cache_data.clear()
-                st.rerun()
-
-    if not px_connected:
-        with st.form("paychex_connect_form"):
-            st.caption(
-                "Enter your **Paychex Flex login** (the same username and password you use "
-                "at myapps.paychex.com). Your password is stored encrypted."
-            )
-            p_col1, p_col2 = st.columns(2)
-            p_user     = p_col1.text_input("Paychex Username")
-            p_password = p_col2.text_input("Paychex Password", type="password")
-            paychex_submit = st.form_submit_button("Connect Paychex Flex", use_container_width=True)
-
-        if paychex_submit:
-            if not (p_user.strip() and p_password.strip()):
-                st.error("Username and password are required.")
-            else:
-                from utils.encryption import encrypt
-                from data.sync import sync_all as _sync_all
-                db.update_user(
-                    username,
-                    paychex_username=p_user.strip(),
-                    paychex_password_enc=encrypt(p_password),
-                    use_simulated_data=False,
-                )
-                user.update({
-                    "paychex_username":     p_user.strip(),
-                    "paychex_password_enc": encrypt(p_password),
-                    "use_simulated_data":   False,
-                })
-                st.session_state["user"] = user
-                with st.spinner("Credentials saved — attempting to sync Paychex data…"):
-                    _res = _sync_all(db.get_user(username))
-                _err  = _res.get("paychex", {}).get("error")
-                _rows = _res.get("paychex", {}).get("rows", 0)
-                if _err:
-                    st.session_state["_acct_flash"] = [
-                        {"type": "error",   "text": f"Paychex sync failed: {_err}"},
-                        {"type": "warning", "text": "Credentials saved but login failed. The nightly sync will retry — check your username and password."},
-                    ]
-                elif _rows == 0:
-                    st.session_state["_acct_flash"] = [
-                        {"type": "warning", "text": "Paychex credentials saved but no data was returned. Verify your account has payroll data in the selected date range."},
-                    ]
-                else:
-                    st.session_state["_acct_flash"] = [
-                        {"type": "success", "text": f"Paychex connected — {_rows} rows imported."},
-                    ]
-                st.session_state["user"] = db.get_user(username)
-                st.cache_data.clear()
-                st.rerun()
-
-st.caption(
-    "After connecting, click **Sync Now** on the Summary page or wait for the "
-    "next scheduled sync to pull your live data."
-)
+    st.markdown("**Paychex Flex** — Payroll & Labour Data")
+    st.caption(
+        "Upload Paychex CSV exports directly on the **Payroll** page "
+        "using the '📤 Update Paychex Data' button at the top of that page."
+    )
+    st.info("Payroll & labour data → **Payroll** page")
 
 if not qb_connected and "qb_connect_nonce" in st.session_state:
     with st.expander("Debug: view QB auth URL", expanded=False):

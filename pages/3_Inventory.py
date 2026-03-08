@@ -22,9 +22,39 @@ page_header(
 # ── Data ──────────────────────────────────────────────────────────────────────
 menu_items = db.get_menu_items(username)
 
+# ── Toast menu upload ─────────────────────────────────────────────────────────
+def _render_toast_menu_upload():
+    from utils.csv_importer import parse_item_selections
+    st.markdown("**Upload Toast Item Selections CSV**")
+    st.caption(
+        "In Toast: Reports → Menu → Item Selections → Export → 'All levels.csv'. "
+        "Re-upload at any time to refresh item data."
+    )
+    uploaded = st.file_uploader(
+        "Item Selections CSV / Excel", type=["csv", "xlsx"],
+        key="menu_upload", label_visibility="collapsed",
+    )
+    if uploaded:
+        try:
+            df = parse_item_selections(uploaded.getvalue(), uploaded.name)
+            st.success(f"Parsed {len(df)} menu items across {df['category'].nunique()} categories.")
+            if st.button("Import to Dashboard", key="menu_import_btn", type="primary"):
+                rows = db.merge_df(df, "menu_items", username, date_col=None)
+                db.update_user(username, use_simulated_data=False)
+                st.session_state["user"] = db.get_user(username)
+                st.cache_data.clear()
+                st.success(f"Imported {rows} items. Refreshing…")
+                st.rerun()
+        except Exception as e:
+            st.error(f"Could not parse file: {e}")
+
 if menu_items.empty:
-    st.warning("No menu data found. Upload an Item Selections CSV in Account Settings.")
+    st.info("No menu data yet. Upload a Toast Item Selections export to get started.")
+    _render_toast_menu_upload()
     st.stop()
+
+with st.expander("📤 Update Toast Menu Data", expanded=False):
+    _render_toast_menu_upload()
 
 # ── KPI strip ─────────────────────────────────────────────────────────────────
 section_header("Menu Overview")

@@ -3,13 +3,12 @@ Sales Analysis — Toast POS sales data.
 """
 
 import streamlit as st
-import pandas as pd
 
 from components.charts import (
     hourly_heatmap, top_items_bar, avg_check_trend,
     covers_by_dow, revenue_trend, revenue_by_dow, revenue_per_cover_trend,
 )
-from components.kpi_card import format_currency, format_pct
+from components.kpi_card import format_currency
 from components.theme import page_header, section_header
 from data import database as db
 
@@ -29,9 +28,40 @@ daily_sales  = db.get_daily_sales(username,  start_date=start_date, end_date=end
 hourly_sales = db.get_hourly_sales(username, start_date=start_date, end_date=end_date)
 menu_items   = db.get_menu_items(username)
 
+# ── Toast upload ──────────────────────────────────────────────────────────────
+def _render_toast_sales_upload():
+    from utils.csv_importer import parse_sales_summary
+    st.markdown("**Upload Toast Sales Summary CSV**")
+    st.caption(
+        "In Toast: Reports → Sales → Sales Summary → Export. "
+        "You can upload multiple files (e.g. one per month) and data will be merged."
+    )
+    uploaded = st.file_uploader(
+        "Sales Summary CSV / Excel", type=["csv", "xlsx"],
+        key="sales_upload", label_visibility="collapsed",
+    )
+    if uploaded:
+        try:
+            df = parse_sales_summary(uploaded.getvalue(), uploaded.name)
+            st.success(f"Parsed {len(df)} rows ({df['date'].min()} → {df['date'].max()})")
+            if st.button("Import to Dashboard", key="sales_import_btn", type="primary"):
+                rows = db.merge_df(df, "daily_sales", username, date_col="date")
+                db.update_user(username, use_simulated_data=False)
+                st.session_state["user"] = db.get_user(username)
+                st.cache_data.clear()
+                st.success(f"Imported {rows} rows. Refreshing…")
+                st.rerun()
+        except Exception as e:
+            st.error(f"Could not parse file: {e}")
+
 if daily_sales.empty:
-    st.warning("No sales data found for the selected period.")
+    with st.container():
+        st.info("No sales data yet. Upload a Toast Sales Summary export to get started.")
+        _render_toast_sales_upload()
     st.stop()
+
+with st.expander("📤 Update Toast Sales Data", expanded=False):
+    _render_toast_sales_upload()
 
 # ── Period-over-period ────────────────────────────────────────────────────────
 mid = len(daily_sales) // 2
@@ -114,14 +144,12 @@ if not menu_items.empty:
     st.divider()
 
 # ── Daily detail table ────────────────────────────────────────────────────────
-section_header("Daily Sales Detail", help="Day-by-day breakdown of guest covers, revenue, average check size, food cost, and food cost %. Sorted most recent first.")
-table = daily_sales[["date","covers","revenue","avg_check","food_cost","food_cost_pct"]].copy()
-table["revenue"]       = table["revenue"].apply(lambda x: f"${x:,.0f}")
-table["avg_check"]     = table["avg_check"].apply(lambda x: f"${x:.2f}")
-table["food_cost"]     = table["food_cost"].apply(lambda x: f"${x:,.0f}")
-table["food_cost_pct"] = table["food_cost_pct"].apply(lambda x: f"{x:.1f}%")
+section_header("Daily Sales Detail", help="Day-by-day breakdown of guest covers, revenue, and average check size. Sorted most recent first.")
+table = daily_sales[["date", "covers", "revenue", "avg_check"]].copy()
+table["revenue"]   = table["revenue"].apply(lambda x: f"${x:,.0f}")
+table["avg_check"] = table["avg_check"].apply(lambda x: f"${x:.2f}")
 table = table.sort_values("date", ascending=False)
-table.columns = ["Date", "Covers", "Revenue", "Avg. Check", "Food Cost", "Food Cost %"]
+table.columns = ["Date", "Covers", "Revenue", "Avg. Check"]
 st.dataframe(table, use_container_width=True, height=400, hide_index=True)
 
 st.divider()

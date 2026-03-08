@@ -1,10 +1,10 @@
 """
-Toast POS CSV import helpers.
+Toast POS and Paychex CSV import helpers.
 
 Accepts raw bytes from st.file_uploader (CSV or Excel) and returns
 clean DataFrames matching the DB schema.  Column names are normalised
-from all known Toast export variants so uploads work regardless of
-which Toast version or report template the user has.
+from all known export variants so uploads work regardless of
+which version or report template the user has.
 """
 
 import io
@@ -246,3 +246,144 @@ def parse_hourly_sales(raw: bytes, filename: str = "") -> pd.DataFrame:
     df = df[df["date"].notna() & (df["date"] != "NaT")]
 
     return df[["date", "hour", "covers", "revenue"]].reset_index(drop=True)
+
+
+# ---------------------------------------------------------------------------
+# Paychex parsers
+# ---------------------------------------------------------------------------
+
+def parse_time_attendance(raw: bytes, filename: str = "") -> pd.DataFrame:
+    """
+    Parse a Paychex Time & Attendance export.
+
+    Returns DataFrame with columns:
+        date, dept, hours, labor_cost
+    """
+    df = _read_raw(raw, filename)
+    df = df.dropna(how="all")
+
+    col_map = {
+        "date":       ["Date", "Work Date", "Business Date", "Pay Date",
+                       "date", "work_date", "business_date"],
+        "dept":       ["Department", "Dept", "Job", "Job Title", "Cost Center",
+                       "department", "dept", "job"],
+        "hours":      ["Hours", "Total Hours", "Regular Hours", "Reg Hours",
+                       "Hrs Worked", "hours", "total_hours", "reg_hours"],
+        "labor_cost": ["Labor Cost", "Total Cost", "Gross Pay", "Amount",
+                       "Wages", "Total Wages", "labor_cost", "gross_pay"],
+    }
+    df = _normalise(df, col_map)
+
+    for col in ["date", "dept", "hours", "labor_cost"]:
+        if col not in df.columns:
+            df[col] = 0 if col in ("hours", "labor_cost") else "General"
+
+    df["date"]       = pd.to_datetime(df["date"], errors="coerce").dt.strftime("%Y-%m-%d")
+    df["dept"]       = df["dept"].astype(str).str.strip().replace("nan", "General")
+    df["hours"]      = _clean_currency(df["hours"])
+    df["labor_cost"] = _clean_currency(df["labor_cost"])
+
+    df = df[df["date"].notna() & (df["date"] != "NaT")]
+    df = df[df["hours"] > 0]
+
+    # Aggregate to one row per date+dept
+    df = df.groupby(["date", "dept"], as_index=False).agg(
+        hours=("hours", "sum"),
+        labor_cost=("labor_cost", "sum"),
+    )
+
+    return df[["date", "dept", "hours", "labor_cost"]].reset_index(drop=True)
+
+
+def parse_payroll_register(raw: bytes, filename: str = "") -> pd.DataFrame:
+    """
+    Parse a Paychex Payroll Register export.
+
+    Returns DataFrame with columns:
+        week_start, week_end, employee_id, employee_name, dept, role,
+        employment_type, hourly_rate, regular_hours, overtime_hours,
+        total_hours, gross_pay
+    """
+    df = _read_raw(raw, filename)
+    df = df.dropna(how="all")
+
+    col_map = {
+        "employee_name":   ["Employee Name", "Employee", "Name", "Full Name",
+                            "employee_name", "employee"],
+        "employee_id":     ["Employee ID", "EE ID", "ID", "Emp ID", "Badge",
+                            "employee_id", "ee_id"],
+        "dept":            ["Department", "Dept", "Job", "Cost Center",
+                            "department", "dept"],
+        "role":            ["Title", "Position", "Job Title", "Role",
+                            "title", "role", "job_title"],
+        "employment_type": ["Pay Type", "Employment Type", "EE Type", "Type",
+                            "employment_type", "pay_type"],
+        "hourly_rate":     ["Hourly Rate", "Rate", "Pay Rate", "Base Rate",
+                            "hourly_rate", "rate"],
+        "regular_hours":   ["Regular Hours", "Reg Hours", "Reg Hrs",
+                            "regular_hours", "reg_hours"],
+        "overtime_hours":  ["Overtime Hours", "OT Hours", "OT Hrs",
+                            "overtime_hours", "ot_hours"],
+        "total_hours":     ["Total Hours", "Gross Hours", "Hrs Worked",
+                            "total_hours"],
+        "gross_pay":       ["Gross Pay", "Total Pay", "Gross Wages", "Gross Earnings",
+                            "gross_pay", "total_pay"],
+        "week_start":      ["Period Begin", "Period Start", "Week Begin",
+                            "Check Date", "Pay Date", "Pay Period Begin",
+                            "week_start", "period_begin"],
+        "week_end":        ["Period End", "Period Stop", "Week End",
+                            "Pay Period End", "week_end", "period_end"],
+    }
+    df = _normalise(df, col_map)
+
+    defaults = {
+        "employee_id":    "UNKNOWN",
+        "employee_name":  "Unknown",
+        "dept":           "General",
+        "role":           "Employee",
+        "employment_type":"Hourly",
+        "hourly_rate":    0.0,
+        "regular_hours":  0.0,
+        "overtime_hours": 0.0,
+        "total_hours":    0.0,
+        "gross_pay":      0.0,
+        "week_start":     "",
+        "week_end":       "",
+    }
+    for col, default in defaults.items():
+        if col not in df.columns:
+            df[col] = default
+
+    # Parse dates
+    df["week_start"] = pd.to_datetime(df["week_start"], errors="coerce").dt.strftime("%Y-%m-%d")
+    if (df["week_end"] == "").all() or df["week_end"].isna().all():
+        df["week_end"] = (
+            pd.to_datetime(df["week_start"], errors="coerce") + pd.Timedelta(days=6)
+        ).dt.strftime("%Y-%m-%d")
+    else:
+        df["week_end"] = pd.to_datetime(df["week_end"], errors="coerce").dt.strftime("%Y-%m-%d")
+
+    df["employee_id"]    = df["employee_id"].astype(str).str.strip()
+    df["employee_name"]  = df["employee_name"].astype(str).str.strip()
+    df["dept"]           = df["dept"].astype(str).str.strip().replace("nan", "General")
+    df["role"]           = df["role"].astype(str).str.strip().replace("nan", "Employee")
+    df["employment_type"]= df["employment_type"].astype(str).str.strip().replace("nan", "Hourly")
+    df["hourly_rate"]    = _clean_currency(df["hourly_rate"])
+    df["regular_hours"]  = _clean_currency(df["regular_hours"])
+    df["overtime_hours"] = _clean_currency(df["overtime_hours"])
+    df["total_hours"]    = _clean_currency(df["total_hours"])
+    df["gross_pay"]      = _clean_currency(df["gross_pay"])
+
+    # Derive total_hours if missing
+    mask = df["total_hours"] == 0
+    df.loc[mask, "total_hours"] = df.loc[mask, "regular_hours"] + df.loc[mask, "overtime_hours"]
+
+    # Drop rows with no employee name or no pay
+    df = df[df["employee_name"].str.len() > 0]
+    df = df[df["employee_name"] != "Unknown"]
+    df = df[df["week_start"].notna() & (df["week_start"] != "NaT")]
+
+    cols = ["week_start", "week_end", "employee_id", "employee_name", "dept", "role",
+            "employment_type", "hourly_rate", "regular_hours", "overtime_hours",
+            "total_hours", "gross_pay"]
+    return df[cols].reset_index(drop=True)

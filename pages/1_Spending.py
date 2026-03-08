@@ -15,17 +15,44 @@ username   = user["username"]
 start_date = st.session_state.get("start_date")
 end_date   = st.session_state.get("end_date")
 
-page_header(
-    "💳 Spending & Expenses",
-    subtitle="Operating expense breakdown sourced from QuickBooks Online.",
-    eyebrow="Financial Analysis",
-)
+# ── QuickBooks connection badge (top-right) ───────────────────────────────────
+_qb_connected = bool(user.get("qb_realm_id") and user.get("qb_refresh_token"))
+_hdr_col, _badge_col = st.columns([4, 1])
+with _hdr_col:
+    page_header(
+        "💳 Spending & Expenses",
+        subtitle="Operating expense breakdown sourced from QuickBooks Online.",
+        eyebrow="Financial Analysis",
+    )
+with _badge_col:
+    st.markdown("<div style='height:1.6rem'></div>", unsafe_allow_html=True)
+    if _qb_connected:
+        st.markdown(
+            "<span style='background:rgba(39,174,96,0.15);border:1px solid rgba(39,174,96,0.4);"
+            "border-radius:20px;padding:4px 12px;font-size:0.75rem;color:#2ecc71;"
+            "font-weight:600;white-space:nowrap;'>● QuickBooks Connected</span>",
+            unsafe_allow_html=True,
+        )
+    else:
+        st.markdown(
+            "<span style='background:rgba(231,76,60,0.12);border:1px solid rgba(231,76,60,0.35);"
+            "border-radius:20px;padding:4px 12px;font-size:0.75rem;color:#e74c3c;"
+            "font-weight:600;white-space:nowrap;'>○ QuickBooks Not Connected</span>",
+            unsafe_allow_html=True,
+        )
+        st.caption("[Connect in Account Settings →](pages/6_Account)")
 
 # ── Data ─────────────────────────────────────────────────────────────────────
 expenses = db.get_expenses(username, start_date=start_date, end_date=end_date)
 
 if expenses.empty:
-    st.warning("No expense data found for the selected period.")
+    if not _qb_connected:
+        st.warning(
+            "QuickBooks is not connected. Go to **Account Settings** to connect "
+            "and start pulling your expense data automatically."
+        )
+    else:
+        st.warning("No expense data found for the selected period.")
     st.stop()
 
 expenses["date"] = pd.to_datetime(expenses["date"])
