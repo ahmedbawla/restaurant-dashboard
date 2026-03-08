@@ -101,6 +101,87 @@ if st.session_state.get("_show_pw"):
 
 st.divider()
 
+# ── Paychex API ───────────────────────────────────────────────────────────────
+st.subheader("Paychex Integration")
+
+_px_connected = bool(user.get("paychex_client_id") and user.get("paychex_client_secret"))
+
+if _px_connected:
+    st.success(f"Connected — Company ID: `{user.get('paychex_company_id', '—')}`")
+    _d1, _d2 = st.columns([1, 4])
+    if _d1.button("Disconnect Paychex", key="px_disconnect"):
+        db.update_user(username,
+                       paychex_client_id=None,
+                       paychex_client_secret=None,
+                       paychex_company_id=None)
+        st.session_state["user"] = db.get_user(username)
+        st.cache_data.clear()
+        st.rerun()
+else:
+    st.caption("Enter your Paychex Developer App credentials. These are stored encrypted and are only accessible to this account.")
+    with st.form("paychex_api_form"):
+        px_id     = st.text_input("Client ID",     placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx")
+        px_secret = st.text_input("Client Secret", type="password", placeholder="your client secret")
+        px_submit = st.form_submit_button("Connect & Verify", use_container_width=False)
+
+    if px_submit:
+        if not (px_id.strip() and px_secret.strip()):
+            st.error("Both Client ID and Client Secret are required.")
+        else:
+            from utils.oauth_paychex import connect as px_connect
+            from utils.encryption import encrypt
+            with st.spinner("Verifying credentials with Paychex…"):
+                ok, companies, err = px_connect(px_id.strip(), px_secret.strip())
+            if not ok:
+                st.error(f"Connection failed: {err}")
+            else:
+                # Auto-select company (most accounts have exactly one)
+                if len(companies) == 1:
+                    company_id = companies[0].get("companyId") or companies[0].get("id", "")
+                    db.update_user(
+                        username,
+                        paychex_client_id     = px_id.strip(),
+                        paychex_client_secret = encrypt(px_secret.strip()),
+                        paychex_company_id    = company_id,
+                        use_simulated_data    = False,
+                    )
+                    st.session_state["user"] = db.get_user(username)
+                    st.cache_data.clear()
+                    st.success(f"Connected! Company: {companies[0].get('legalName', company_id)}")
+                    st.rerun()
+                elif len(companies) > 1:
+                    # Multiple companies — store credentials, let user pick
+                    st.session_state["_px_companies"] = companies
+                    st.session_state["_px_id"]        = px_id.strip()
+                    st.session_state["_px_secret"]    = px_secret.strip()
+                    st.rerun()
+                else:
+                    st.error("Credentials valid but no companies found. Check your Paychex app scopes include 'companies'.")
+
+# Multi-company picker (shown after successful auth if >1 company)
+if st.session_state.get("_px_companies"):
+    _companies = st.session_state["_px_companies"]
+    _options   = {c.get("legalName", c.get("companyId", "")): c for c in _companies}
+    _picked    = st.selectbox("Select Company", list(_options.keys()), key="px_company_pick")
+    if st.button("Confirm Company", key="px_company_confirm"):
+        from utils.encryption import encrypt
+        _c = _options[_picked]
+        db.update_user(
+            username,
+            paychex_client_id     = st.session_state["_px_id"],
+            paychex_client_secret = encrypt(st.session_state["_px_secret"]),
+            paychex_company_id    = _c.get("companyId") or _c.get("id", ""),
+            use_simulated_data    = False,
+        )
+        st.session_state["user"] = db.get_user(username)
+        st.cache_data.clear()
+        for k in ("_px_companies", "_px_id", "_px_secret"):
+            st.session_state.pop(k, None)
+        st.success(f"Connected to {_picked}.")
+        st.rerun()
+
+st.divider()
+
 # ── Account Info ──────────────────────────────────────────────────────────────
 st.subheader("Account Information")
 c1, c2, c3 = st.columns(3)

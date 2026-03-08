@@ -71,9 +71,10 @@ def get_connector(source: str, user: dict):
     elif source == "paychex":
         if _has_paychex_creds(user):
             from data.connectors.paychex_connector import PaychexConnector
+            from utils.encryption import decrypt
             conn = PaychexConnector({
                 "client_id":     user["paychex_client_id"],
-                "client_secret": user["paychex_client_secret"],
+                "client_secret": decrypt(user["paychex_client_secret"]),
                 "company_id":    user["paychex_company_id"],
             })
             return {
