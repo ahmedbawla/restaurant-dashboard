@@ -19,7 +19,7 @@ end_date   = st.session_state.get("end_date")
 
 page_header(
     "📈 Sales Analysis",
-    subtitle="Revenue, guest covers, and check-size trends sourced from Toast POS.",
+    subtitle="Revenue, guest covers, and check-size trends from your uploaded sales data.",
     eyebrow="Revenue Analytics",
 )
 

@@ -26,7 +26,7 @@ end_date   = st.session_state.get("end_date")
 
 page_header(
     "👥 Payroll & Labour",
-    subtitle="Labour cost analysis and payroll summary sourced from Paychex.",
+    subtitle="Labour cost analysis and payroll summary from your uploaded Paychex data.",
     eyebrow="Workforce Analytics",
 )
 
