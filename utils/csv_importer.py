@@ -252,6 +252,124 @@ def parse_hourly_sales(raw: bytes, filename: str = "") -> pd.DataFrame:
 # Paychex parsers
 # ---------------------------------------------------------------------------
 
+def parse_paychex_labor_cost(raw: bytes, filename: str = "") -> tuple:
+    """
+    Parse the Paychex 'Payroll Labor Cost' CSV export (no header row).
+
+    Column layout (0-indexed):
+        0  company_name
+        1  company_id
+        2  flag (N / blank)
+        3  employee_name  (Last, First M)
+        4  employee_seq_id
+        5  hire_date
+        6  blank
+        7  pay_frequency
+        8  employment_type  (Part Time / blank=Full Time)
+        9  hourly_rate
+        10 state
+        11 scheduled_hours  (may be blank)
+        12 regular_hours    (may be blank)
+        13 total_hours_worked
+        14 pay_date  (MM/DD/YYYY — the check/Wednesday date)
+        15 period_number
+        16 year
+
+    Returns (weekly_payroll_df, daily_labor_df).
+    """
+    from datetime import timedelta
+
+    df = _read_raw(raw, filename)
+    df = df.dropna(how="all")
+
+    # Assign explicit column names
+    col_names = [
+        "company_name", "company_id", "flag", "employee_name",
+        "employee_seq_id", "hire_date", "blank", "pay_frequency",
+        "employment_type", "hourly_rate", "state",
+        "scheduled_hours", "regular_hours", "total_hours", "pay_date",
+        "period_number", "year",
+    ]
+    # Pad or trim to match actual column count
+    actual_cols = len(df.columns)
+    df.columns = col_names[:actual_cols] + [f"extra_{i}" for i in range(max(0, actual_cols - len(col_names)))]
+
+    # Clean numeric columns
+    df["hourly_rate"]  = _clean_currency(df["hourly_rate"].fillna(0))
+    df["total_hours"]  = _clean_currency(df["total_hours"].fillna(0))
+    df["regular_hours"]= _clean_currency(df.get("regular_hours", pd.Series([0]*len(df))).fillna(0))
+
+    # Parse pay date
+    df["pay_date"] = pd.to_datetime(df["pay_date"], format="%m/%d/%Y", errors="coerce")
+    df = df[df["pay_date"].notna() & (df["total_hours"] > 0)]
+
+    # Derive gross pay from hourly rate × hours
+    df["gross_pay"] = (df["hourly_rate"] * df["total_hours"]).round(2)
+
+    # Week end = pay_date, week start = pay_date - 6 days
+    df["week_end"]   = df["pay_date"].dt.strftime("%Y-%m-%d")
+    df["week_start"] = (df["pay_date"] - pd.Timedelta(days=6)).dt.strftime("%Y-%m-%d")
+
+    # Employment type — blank means Full Time
+    df["employment_type"] = df["employment_type"].fillna("").astype(str).str.strip()
+    df["employment_type"] = df["employment_type"].replace({"": "Full Time", "nan": "Full Time"})
+
+    # Employee name cleanup
+    df["employee_name"] = df["employee_name"].astype(str).str.strip()
+
+    # Overtime: hours > 40 in a week = overtime
+    df["overtime_hours"] = (df["total_hours"] - 40).clip(lower=0).round(4)
+    df["regular_hours"]  = df[["total_hours", df.columns.tolist().index("overtime_hours") if "overtime_hours" in df.columns else "total_hours"]].apply(
+        lambda r: min(r["total_hours"], 40), axis=1
+    ).round(4)
+
+    # ── weekly_payroll ────────────────────────────────────────────────────────
+    wp = df[[
+        "week_start", "week_end", "employee_seq_id", "employee_name",
+        "employment_type", "hourly_rate", "regular_hours", "overtime_hours",
+        "total_hours", "gross_pay",
+    ]].copy()
+    wp["employee_id"] = wp["employee_seq_id"].astype(str).str.strip()
+    wp["dept"]        = "General"
+    wp["role"]        = wp["employment_type"]
+    wp = wp[[
+        "week_start", "week_end", "employee_id", "employee_name", "dept", "role",
+        "employment_type", "hourly_rate", "regular_hours", "overtime_hours",
+        "total_hours", "gross_pay",
+    ]].reset_index(drop=True)
+
+    # ── daily_labor ───────────────────────────────────────────────────────────
+    daily_rows = []
+    for _, row in df.iterrows():
+        try:
+            ps = pd.to_datetime(row["week_start"]).date()
+            pe = pd.to_datetime(row["week_end"]).date()
+        except Exception:
+            continue
+        n_days      = (pe - ps).days + 1
+        daily_hrs   = row["total_hours"] / n_days if n_days else 0
+        daily_cost  = row["gross_pay"]   / n_days if n_days else 0
+        for i in range(n_days):
+            day = ps + timedelta(days=i)
+            daily_rows.append({
+                "date":       day.isoformat(),
+                "dept":       "General",
+                "hours":      round(daily_hrs,  4),
+                "labor_cost": round(daily_cost, 4),
+            })
+
+    dl = pd.DataFrame(daily_rows) if daily_rows else pd.DataFrame(
+        columns=["date", "dept", "hours", "labor_cost"]
+    )
+    if not dl.empty:
+        dl = dl.groupby(["date", "dept"], as_index=False).agg(
+            hours=("hours", "sum"),
+            labor_cost=("labor_cost", "sum"),
+        )
+
+    return wp, dl
+
+
 def parse_time_attendance(raw: bytes, filename: str = "") -> pd.DataFrame:
     """
     Parse a Paychex Time & Attendance export.
