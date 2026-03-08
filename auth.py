@@ -44,12 +44,12 @@ _BRAND_CSS = """
 
 /* ── Logo ── */
 .tm-logo {
-    font-size: 3.6rem; font-weight: 900; letter-spacing: -2px; line-height: 1;
+    font-size: 5rem; font-weight: 900; letter-spacing: -3px; line-height: 1;
     background: linear-gradient(135deg, #FF6B35 0%, #FF4B4B 45%, #FF8C42 100%);
     -webkit-background-clip: text; -webkit-text-fill-color: transparent;
     background-clip: text; text-align: center;
-    margin-bottom: 0.4rem;
-    filter: drop-shadow(0 0 40px rgba(255,75,75,0.35));
+    margin-bottom: 0.5rem;
+    filter: drop-shadow(0 0 60px rgba(255,75,75,0.5));
 }
 .tm-tagline {
     text-align: center; color: rgba(255,255,255,0.5);
