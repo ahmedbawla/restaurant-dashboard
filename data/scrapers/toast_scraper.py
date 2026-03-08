@@ -14,13 +14,27 @@ Usage from sync.py:
 """
 
 import io
+import os
+import subprocess
 from datetime import date
 
 import pandas as pd
 
 PORTAL_URL  = "https://pos.toasttab.com"
 LOGIN_PATH  = "/login"
-TIMEOUT_MS  = 20_000   # 20 s for page actions
+TIMEOUT_MS  = 30_000   # 30 s for page actions
+
+
+def _ensure_browser_installed() -> None:
+    """Install Playwright Chromium browser binary if not already present."""
+    cache = os.path.expanduser("~/.cache/ms-playwright")
+    if not os.path.exists(cache) or not any(
+        d.startswith("chromium") for d in os.listdir(cache)
+    ) if os.path.exists(cache) else True:
+        subprocess.run(
+            ["playwright", "install", "chromium"],
+            check=True, capture_output=True,
+        )
 
 
 class ToastScraper:
@@ -45,11 +59,22 @@ class ToastScraper:
     # ------------------------------------------------------------------
 
     def _start(self):
+        _ensure_browser_installed()
         from playwright.sync_api import sync_playwright
         self._pw      = sync_playwright().__enter__()
-        self._browser = self._pw.chromium.launch(headless=True)
-        ctx           = self._browser.new_context(accept_downloads=True)
-        self._page    = ctx.new_page()
+        self._browser = self._pw.chromium.launch(
+            headless=True,
+            args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"],
+        )
+        ctx          = self._browser.new_context(
+            accept_downloads=True,
+            user_agent=(
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/121.0.0.0 Safari/537.36"
+            ),
+        )
+        self._page   = ctx.new_page()
         self._login()
 
     def close(self):
@@ -271,42 +296,22 @@ class ToastScraper:
     # ------------------------------------------------------------------
 
     def get_sales(self, start_date: date, end_date: date) -> pd.DataFrame:
-        try:
-            self._ensure(start_date, end_date)
-            return self._cache.get("sales", pd.DataFrame())
-        except Exception as exc:
-            print(f"[toast_scraper] get_sales error: {exc}")
-            return pd.DataFrame()
+        self._ensure(start_date, end_date)
+        return self._cache.get("sales", pd.DataFrame())
 
     def get_hourly_sales(self, start_date: date, end_date: date) -> pd.DataFrame:
-        try:
-            self._ensure(start_date, end_date)
-            return self._cache.get("hourly", pd.DataFrame())
-        except Exception as exc:
-            print(f"[toast_scraper] get_hourly_sales error: {exc}")
-            return pd.DataFrame()
+        self._ensure(start_date, end_date)
+        return self._cache.get("hourly", pd.DataFrame())
 
     def get_menu_items(self, *_) -> pd.DataFrame:
-        try:
-            if self._cache is None:
-                return pd.DataFrame()
-            return self._cache.get("items", pd.DataFrame())
-        except Exception as exc:
-            print(f"[toast_scraper] get_menu_items error: {exc}")
+        if self._cache is None:
             return pd.DataFrame()
+        return self._cache.get("items", pd.DataFrame())
 
     def get_menu_item_sales(self, start_date: date, end_date: date) -> pd.DataFrame:
-        try:
-            self._ensure(start_date, end_date)
-            return self._cache.get("items", pd.DataFrame())
-        except Exception as exc:
-            print(f"[toast_scraper] get_menu_item_sales error: {exc}")
-            return pd.DataFrame()
+        self._ensure(start_date, end_date)
+        return self._cache.get("items", pd.DataFrame())
 
     def get_labor(self, start_date: date, end_date: date) -> pd.DataFrame:
-        try:
-            self._ensure(start_date, end_date)
-            return self._cache.get("labor", pd.DataFrame())
-        except Exception as exc:
-            print(f"[toast_scraper] get_labor error: {exc}")
-            return pd.DataFrame()
+        self._ensure(start_date, end_date)
+        return self._cache.get("labor", pd.DataFrame())
