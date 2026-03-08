@@ -25,15 +25,26 @@ LOGIN_PATH  = "/login"
 TIMEOUT_MS  = 30_000   # 30 s for page actions
 
 
-def _ensure_browser_installed() -> None:
-    """Install Playwright Chromium browser binary if not already present."""
+def _chromium_ready() -> bool:
+    """Return True if the Playwright Chromium binary is already installed."""
     cache = os.path.expanduser("~/.cache/ms-playwright")
-    if not os.path.exists(cache) or not any(
-        d.startswith("chromium") for d in os.listdir(cache)
-    ) if os.path.exists(cache) else True:
+    if not os.path.exists(cache):
+        return False
+    return any(d.startswith("chromium") for d in os.listdir(cache))
+
+
+def ensure_browser_installed() -> None:
+    """
+    Download the Playwright Chromium binary if not already present.
+    Safe to call at app startup — discards subprocess output to avoid
+    pipe-buffer deadlocks, and sets a generous timeout.
+    """
+    if not _chromium_ready():
         subprocess.run(
             ["playwright", "install", "chromium"],
-            check=True, capture_output=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=300,   # 5 min max for the download
         )
 
 
@@ -59,7 +70,11 @@ class ToastScraper:
     # ------------------------------------------------------------------
 
     def _start(self):
-        _ensure_browser_installed()
+        if not _chromium_ready():
+            raise RuntimeError(
+                "Chromium browser is not installed on this server. "
+                "The app needs to restart once to download it — please try again in a minute."
+            )
         from playwright.sync_api import sync_playwright
         self._pw      = sync_playwright().__enter__()
         self._browser = self._pw.chromium.launch(
