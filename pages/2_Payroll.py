@@ -35,6 +35,10 @@ daily_labor    = db.get_daily_labor(username,    start_date=start_date, end_date
 weekly_payroll = db.get_weekly_payroll(username, start_date=start_date, end_date=end_date)
 daily_sales    = db.get_daily_sales(username,    start_date=start_date, end_date=end_date)
 
+# Check existence without date filter so a narrow date range doesn't hide real data
+_any_labor    = db.get_daily_labor(username)
+_any_payroll  = db.get_weekly_payroll(username)
+
 # ── Paychex upload ────────────────────────────────────────────────────────────
 def _render_paychex_upload():
     from utils.csv_importer import parse_paychex_labor_cost
@@ -68,10 +72,21 @@ def _render_paychex_upload():
         except Exception as e:
             st.error(f"Could not parse file: {e}")
 
-if daily_labor.empty or weekly_payroll.empty:
+if _any_labor.empty or _any_payroll.empty:
     st.info("No payroll data yet. Upload your Paychex exports to get started.")
     _render_paychex_upload()
     st.stop()
+
+if daily_labor.empty or weekly_payroll.empty:
+    st.info(
+        f"No payroll data for the selected period "
+        f"({_any_payroll['week_start'].min()} → {_any_payroll['week_end'].max()} available). "
+        "Change the date range in the sidebar to view your data."
+    )
+    daily_labor    = _any_labor
+    weekly_payroll = _any_payroll
+    if daily_sales.empty:
+        daily_sales = db.get_daily_sales(username)
 
 with st.expander("Update Paychex Data", expanded=False):
     _render_paychex_upload()

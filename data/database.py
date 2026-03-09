@@ -279,28 +279,13 @@ def init_db() -> None:
         conn.execute(text(
             "ALTER TABLE users ADD COLUMN IF NOT EXISTS sim_fallback_cleared BOOLEAN NOT NULL DEFAULT FALSE"
         ))
-    _tables_to_wipe = ["daily_sales", "hourly_sales", "menu_items",
-                       "daily_labor", "weekly_payroll", "expenses", "cash_flow"]
     try:
-        with engine.connect() as _conn:
-            _pending = _conn.execute(text(
-                "SELECT username FROM users WHERE sim_fallback_cleared = FALSE"
-            )).fetchall()
-        # Each user in its own transaction so one failure doesn't roll back others
-        for (_uname,) in _pending:
-            try:
-                with engine.begin() as conn:
-                    for _tbl in _tables_to_wipe:
-                        conn.execute(text(f"DELETE FROM {_tbl} WHERE username = :u"), {"u": _uname})
-                    conn.execute(text(
-                        "UPDATE users SET sim_fallback_cleared = TRUE, "
-                        "last_sync_at = NULL, last_sync_status = NULL "
-                        "WHERE username = :u"
-                    ), {"u": _uname})
-            except Exception:
-                pass  # will retry on next startup for this user only
+        with engine.begin() as conn:
+            conn.execute(text(
+                "UPDATE users SET sim_fallback_cleared = TRUE WHERE sim_fallback_cleared = FALSE"
+            ))
     except Exception:
-        pass  # non-fatal if we can't read the pending list
+        pass
 
     # ── Step 3: Composite PKs (each in its own transaction) ───────────────────
     for tbl, pk_cols in _TABLE_PKS.items():
