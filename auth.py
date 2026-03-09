@@ -338,3 +338,5 @@ def _register():
         st.rerun()
     except ValueError as exc:
         st.error(str(exc))
+    except Exception as exc:
+        st.error(f"Account creation failed: {exc}")

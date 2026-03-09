@@ -86,15 +86,15 @@ with st.sidebar:
 
     _view = st.selectbox(
         "View",
-        ["Daily", "Monthly", "Current Quarter", "Last Quarter", "Annual", "Custom"],
+        ["Weekly", "Monthly", "Current Quarter", "Last Quarter", "Annual", "Custom"],
         key="date_view_select",
     )
 
     _today = date.today()
 
-    if _view == "Daily":
-        # Most recent synced business day
-        _start_d = max_d
+    if _view == "Weekly":
+        # Last full 7 days of available data
+        _start_d = max_d - timedelta(days=6)
         _end_d   = max_d
 
     elif _view == "Monthly":

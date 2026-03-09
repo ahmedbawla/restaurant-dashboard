@@ -31,12 +31,17 @@ page_header(
 )
 
 # ── Data ─────────────────────────────────────────────────────────────────────
-# Payroll is weekly data — load all of it regardless of the global date range.
-# The sidebar "Payroll Week" selector is the correct filter for payroll.
-# Daily sales still uses the global date range for labor-% cross-referencing.
-daily_labor    = db.get_daily_labor(username)
+# Load all payroll data then apply overlap filter so weeks that span the
+# boundary of the selected date range are still included.
+daily_labor    = db.get_daily_labor(username,    start_date=start_date, end_date=end_date)
 weekly_payroll = db.get_weekly_payroll(username)
-daily_sales    = db.get_daily_sales(username, start_date=start_date, end_date=end_date)
+daily_sales    = db.get_daily_sales(username,    start_date=start_date, end_date=end_date)
+
+# Filter weekly_payroll to weeks that overlap with the selected period
+if start_date:
+    weekly_payroll = weekly_payroll[weekly_payroll["week_end"] >= start_date]
+if end_date:
+    weekly_payroll = weekly_payroll[weekly_payroll["week_start"] <= end_date]
 
 # ── Paychex upload ────────────────────────────────────────────────────────────
 def _render_paychex_upload():
