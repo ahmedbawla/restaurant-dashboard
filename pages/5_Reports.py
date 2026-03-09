@@ -16,7 +16,6 @@ from components.charts import (
 from components.theme import page_header
 from data import database as db
 from utils.pdf_generator import generate_pdf
-from utils.report_generator import send_email_report, generate_html_report
 
 with open(Path(__file__).parent.parent / "config.json") as f:
     CONFIG = json.load(f)
@@ -24,7 +23,6 @@ THRESHOLDS = CONFIG.get("thresholds", {})
 
 user       = st.session_state["user"]
 username   = user["username"]
-user_email = user.get("email") or ""
 start_date = st.session_state.get("start_date")
 end_date   = st.session_state.get("end_date")
 
@@ -59,20 +57,12 @@ st.divider()
 
 # ── Action bar ────────────────────────────────────────────────────────────────
 st.subheader("Export")
-b1, b2, b3, _ = st.columns([1, 1, 1, 2])
-gen     = b1.button("🔄 Preview Report",  use_container_width=True)
-dl_pdf  = b2.button("📥 Download PDF",    use_container_width=True)
-do_email = b3.button(
-    f"📧 Email to {user_email}" if user_email else "📧 Email Report",
-    use_container_width=True,
-    disabled=not user_email,
-)
-
-if not user_email:
-    st.caption("⚠️ No email on file. Add one in Account Settings.")
+b1, b2, _ = st.columns([1, 1, 3])
+gen    = b1.button("🔄 Preview Report", use_container_width=True)
+dl_pdf = b2.button("📥 Download PDF",   use_container_width=True)
 
 # ── Load data (shared) ────────────────────────────────────────────────────────
-if gen or dl_pdf or (do_email and user_email):
+if gen or dl_pdf:
     if not selected:
         st.warning("Select at least one section.")
         st.stop()
@@ -103,23 +93,6 @@ if gen or dl_pdf or (do_email and user_email):
             file_name=fname,
             mime="application/pdf",
         )
-
-    # ── Email ─────────────────────────────────────────────────────────────────
-    if do_email and user_email:
-        with st.spinner(f"Sending report to {user_email}…"):
-            html = generate_html_report(**{
-                k: v for k, v in kwargs.items()
-                if k not in ("start_date", "end_date")
-            })
-            err = send_email_report(
-                user_email,
-                f"{user['restaurant_name']} — Performance Report ({date.today().strftime('%B %Y')})",
-                html,
-            )
-        if err:
-            st.error(f"Email failed: {err}")
-        else:
-            st.success(f"Report sent to {user_email}")
 
     # ── Preview ───────────────────────────────────────────────────────────────
     if gen:
