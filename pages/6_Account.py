@@ -10,30 +10,6 @@ from data import database as db
 user     = st.session_state["user"]
 username = user["username"]
 
-# ── Trigger QB sync immediately after OAuth redirect ─────────────────────────
-if st.session_state.pop("qb_just_connected", False):
-    from data.sync import sync_all as _sync_all
-    with st.spinner("QuickBooks connected — syncing your data now…"):
-        _qb_res = _sync_all(db.get_user(username))
-    _qb_err  = _qb_res.get("quickbooks", {}).get("error")
-    _qb_rows = _qb_res.get("quickbooks", {}).get("rows", 0)
-    if _qb_err:
-        st.session_state["_acct_flash"] = [
-            {"type": "error",   "text": f"QuickBooks sync failed: {_qb_err}"},
-            {"type": "warning", "text": "Connection saved but no data was imported. Check your QuickBooks permissions."},
-        ]
-    elif _qb_rows == 0:
-        st.session_state["_acct_flash"] = [
-            {"type": "warning", "text": "QuickBooks connected but no data was returned. Ensure your QB account has transactions in the selected date range."},
-        ]
-    else:
-        st.session_state["_acct_flash"] = [
-            {"type": "success", "text": f"QuickBooks connected and synced {_qb_rows} rows."},
-        ]
-    st.session_state["user"] = db.get_user(username)
-    st.cache_data.clear()
-    st.rerun()
-
 if "oauth_error" in st.session_state:
     st.error(st.session_state.pop("oauth_error"))
 

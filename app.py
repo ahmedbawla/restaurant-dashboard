@@ -75,6 +75,29 @@ user     = require_auth()
 username = user["username"]
 render_sidebar_logout()
 
+# ── QB post-connect sync ──────────────────────────────────────────────────────
+if st.session_state.pop("qb_just_connected", False):
+    from data.sync import sync_all as _sync_all
+    with st.spinner("QuickBooks connected — syncing your data now…"):
+        _qb_res = _sync_all(db.get_user(username))
+    _qb_err  = _qb_res.get("quickbooks", {}).get("error")
+    _qb_rows = _qb_res.get("quickbooks", {}).get("rows", 0)
+    if _qb_err:
+        st.session_state["_sync_flash"] = [
+            {"type": "error", "text": f"QuickBooks sync failed: {_qb_err}"},
+        ]
+    elif _qb_rows == 0:
+        st.session_state["_sync_flash"] = [
+            {"type": "warning", "text": "QuickBooks connected but no data was returned."},
+        ]
+    else:
+        st.session_state["_sync_flash"] = [
+            {"type": "success", "text": f"QuickBooks connected and synced {_qb_rows} rows."},
+        ]
+    st.session_state["user"] = db.get_user(username)
+    st.cache_data.clear()
+    st.rerun()
+
 # ── Global date range selector ────────────────────────────────────────────────
 min_str, max_str = db.get_date_range(username)
 min_d = date.fromisoformat(min_str)
