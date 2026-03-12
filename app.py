@@ -39,48 +39,50 @@ _qp = st.query_params
 if "code" in _qp and "state" in _qp:
     from utils.oauth_quickbooks import decode_state, exchange_code
     _oauth_error = ""
+    _qb_username = ""
+    # Read all params BEFORE clearing them
+    _qb_code     = _qp.get("code", "")
+    _qb_state    = _qp.get("state", "")
+    _qb_realm_id = _qp.get("realmId", "")
+    st.query_params.clear()   # clear URL immediately — must happen before any rerun
     try:
-        _qb_username, _nonce = decode_state(_qp["state"])
-        _stored = db.get_user(_qb_username)
-        # Try to exchange the code regardless of nonce match — if the exchange
-        # succeeds, we accept the connection.  Nonce mismatch can legitimately
-        # happen when the user refreshes or opens the redirect in a different tab.
-        _try_nonce_match = _stored and _stored.get("oauth_state") == _nonce
-        try:
-            _tokens   = exchange_code(_qp["code"])
-            _realm_id = _qp.get("realmId", "")
-            if not _realm_id or not _tokens.get("refresh_token"):
-                _oauth_error = "QuickBooks returned an incomplete response — please try again."
-            else:
-                db.update_user(
-                    _qb_username,
-                    qb_realm_id        = _realm_id,
-                    qb_refresh_token   = _tokens["refresh_token"],
-                    oauth_state        = None,
-                    use_simulated_data = False,
-                    qb_banking_scope   = True,
-                )
-                _refreshed_user = db.get_user(_qb_username)
-                st.session_state["user"]              = dict(_refreshed_user)
-                st.session_state["qb_just_connected"] = True
-                # Cookie set deferred — rendered output before st.rerun() is discarded
-                st.session_state["_pending_set_cookie"] = _qb_username
-        except Exception as _exc:
-            _oauth_error = f"QuickBooks token exchange failed: {_exc}"
+        _qb_username, _nonce = decode_state(_qb_state)
+        _tokens = exchange_code(_qb_code)
+        if not _qb_realm_id or not _tokens.get("refresh_token"):
+            _oauth_error = (
+                f"Intuit did not return expected fields. "
+                f"realmId={repr(_qb_realm_id)}, "
+                f"refresh_token present={bool(_tokens.get('refresh_token'))}"
+            )
+        else:
+            db.update_user(
+                _qb_username,
+                qb_realm_id        = _qb_realm_id,
+                qb_refresh_token   = _tokens["refresh_token"],
+                oauth_state        = None,
+                use_simulated_data = False,
+                qb_banking_scope   = True,
+            )
+            _refreshed_user = db.get_user(_qb_username)
+            # Set user in session state — do NOT rerun, let the script continue.
+            # st.rerun() on Streamlit Cloud can drop the new session state on cold starts.
+            st.session_state["user"]              = dict(_refreshed_user)
+            st.session_state["qb_just_connected"] = True
+            st.session_state["_pending_set_cookie"] = True
     except Exception as _exc:
-        _oauth_error = f"QuickBooks connection failed: {_exc}"
-    st.query_params.clear()
+        _oauth_error = f"QuickBooks token exchange failed: {_exc}"
     if _oauth_error:
-        # Persist the error to the DB so it survives session resets
+        # Write to DB so the error survives even if the session resets
         try:
-            db.update_user(_qb_username, last_sync_status=f"QB_OAUTH_ERROR: {_oauth_error}")
+            if _qb_username:
+                db.update_user(_qb_username, last_sync_status=f"QB_OAUTH_ERROR: {_oauth_error}")
         except Exception:
             pass
         st.session_state["_sync_flash"] = [
-            {"type": "error", "text": f"QuickBooks connection error: {_oauth_error}"},
+            {"type": "error", "text": f"QuickBooks: {_oauth_error}"},
         ]
-        st.session_state["oauth_error"] = _oauth_error
-    st.rerun()
+    # Do NOT st.rerun() — let the script continue so session_state["user"] is used
+    # immediately by require_auth() on this same execution.
 
 # ── Seed demo account once per session ───────────────────────────────────────
 if "seeded" not in st.session_state:
@@ -92,10 +94,10 @@ user     = require_auth()
 username = user["username"]
 render_sidebar_logout()
 
-# ── Deferred session cookie (set after auth so component renders correctly) ───
-if "_pending_set_cookie" in st.session_state:
+# ── Session cookie — set after auth renders correctly ─────────────────────────
+if st.session_state.pop("_pending_set_cookie", None):
     from auth import _set_session_cookie
-    _set_session_cookie(st.session_state.pop("_pending_set_cookie"))
+    _set_session_cookie(username)
 
 # ── QB sync — fires on new connection OR whenever a QB-connected user logs in ─
 _run_qb_sync = (
