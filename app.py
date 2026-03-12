@@ -42,18 +42,20 @@ _qp = st.query_params
 _raw_qp = dict(_qp)
 if _raw_qp:
     try:
-        _debug_keys = list(_raw_qp.keys())
         _debug_state = _raw_qp.get("state", "")
         if _debug_state:
             try:
                 from utils.oauth_quickbooks import decode_state as _ds
                 _du, _ = _ds(_debug_state)
-                db.update_user(_du, last_sync_status=f"QP_DEBUG: keys={_debug_keys} realmId={repr(_raw_qp.get('realmId',''))}")
-            except Exception as _de:
+                _debug_msg = (
+                    f"QP_DEBUG: keys={list(_raw_qp.keys())} "
+                    f"error={repr(_raw_qp.get('error',''))} "
+                    f"error_description={repr(_raw_qp.get('error_description',''))} "
+                    f"realmId={repr(_raw_qp.get('realmId',''))}"
+                )
+                db.update_user(_du, last_sync_status=_debug_msg)
+            except Exception:
                 pass
-        else:
-            # No state — log to a fixed known user if possible
-            pass
     except Exception:
         pass
 if "code" in _qp and "state" in _qp:
