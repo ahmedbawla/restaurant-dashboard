@@ -56,6 +56,8 @@ if "code" in _qp and "state" in _qp:
             _refreshed_user = db.get_user(_qb_username)
             st.session_state["user"] = dict(_refreshed_user)
             st.session_state["qb_just_connected"] = True
+            from auth import _set_session_cookie
+            _set_session_cookie(_qb_username)
         else:
             _oauth_error = "OAuth state mismatch — please try connecting again."
     except Exception as _exc:

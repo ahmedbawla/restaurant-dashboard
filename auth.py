@@ -5,12 +5,16 @@ Flow:
   Landing page → "Log In"         → username + password → logged in
   Landing page → "Create Account" → fill form → auto-logged in
 
-SMS 2FA and remember-me cookies are not yet enabled.
+Session is persisted across browser refreshes / OAuth redirects via a
+signed cookie (HMAC-SHA256, 30-day max age).
 
 Import DAG (no circular imports): auth → database
 """
 
+import hashlib
+import hmac
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -18,6 +22,65 @@ sys.path.insert(0, str(Path(__file__).parent))
 import streamlit as st
 
 from data import database as db
+
+# ── Cookie helpers ─────────────────────────────────────────────────────────────
+_COOKIE_NAME    = "tm_session"
+_COOKIE_MAX_AGE = 30 * 24 * 3600   # 30 days
+
+
+def _cookie_secret() -> str:
+    try:
+        return st.secrets["cookie_secret"]
+    except Exception:
+        return "tablemetrics-cookie-secret-change-me"
+
+
+def _make_session_token(username: str) -> str:
+    ts      = str(int(time.time()))
+    payload = f"{username}:{ts}"
+    sig     = hmac.new(_cookie_secret().encode(), payload.encode(), hashlib.sha256).hexdigest()
+    return f"{payload}:{sig}"
+
+
+def _verify_session_token(token: str) -> str | None:
+    """Return username if the token is valid and not expired, else None."""
+    try:
+        username, ts_str, sig = token.rsplit(":", 2)
+        if time.time() - int(ts_str) > _COOKIE_MAX_AGE:
+            return None
+        payload  = f"{username}:{ts_str}"
+        expected = hmac.new(_cookie_secret().encode(), payload.encode(), hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(sig, expected):
+            return None
+        return username
+    except Exception:
+        return None
+
+
+def _get_cookie_ctrl():
+    """Return a per-session CookieController, lazily created once per session."""
+    if "_cookie_ctrl" not in st.session_state:
+        from streamlit_cookies_controller import CookieController
+        st.session_state["_cookie_ctrl"] = CookieController()
+    return st.session_state["_cookie_ctrl"]
+
+
+def _set_session_cookie(username: str) -> None:
+    try:
+        _get_cookie_ctrl().set(
+            _COOKIE_NAME,
+            _make_session_token(username),
+            max_age=_COOKIE_MAX_AGE,
+        )
+    except Exception:
+        pass
+
+
+def _clear_session_cookie() -> None:
+    try:
+        _get_cookie_ctrl().remove(_COOKIE_NAME)
+    except Exception:
+        pass
 
 
 _HIDE_SIDEBAR = """
@@ -162,6 +225,23 @@ def require_auth() -> dict:
     if "user" in st.session_state:
         return st.session_state["user"]
 
+    # ── Cookie auto-login ──────────────────────────────────────────────────────
+    # The cookie controller reads the browser cookie via JS.  On the very first
+    # render of a fresh session the value may not be available yet; it arrives on
+    # the next Streamlit rerun triggered by the component.
+    try:
+        _ctrl  = _get_cookie_ctrl()
+        _token = _ctrl.get(_COOKIE_NAME)
+        if _token:
+            _uname = _verify_session_token(_token)
+            if _uname:
+                _user = db.get_user(_uname)
+                if _user:
+                    st.session_state["user"] = dict(_user)
+                    st.rerun()
+    except Exception:
+        pass
+
     st.markdown(_HIDE_SIDEBAR, unsafe_allow_html=True)
     st.markdown(_BRAND_CSS,    unsafe_allow_html=True)
 
@@ -192,6 +272,7 @@ def render_sidebar_logout() -> None:
         st.markdown(f"<span style='font-size:0.9rem;font-weight:600;color:rgba(240,242,246,0.85);'>{user.get('restaurant_name', '')}</span>", unsafe_allow_html=True)
         st.caption(f"Logged in as `{user.get('username', '')}`")
         if st.button("Logout", use_container_width=True):
+            _clear_session_cookie()
             for k in ["user", "_auth_screen"]:
                 st.session_state.pop(k, None)
             st.rerun()
@@ -282,6 +363,7 @@ def _login():
 
     st.session_state.pop("_auth_screen", None)
     st.session_state["user"] = dict(user)
+    _set_session_cookie(username)
     st.rerun()
 
 
@@ -335,6 +417,7 @@ def _register():
         new_user = db.get_user(username.strip())
         st.session_state.pop("_auth_screen", None)
         st.session_state["user"] = dict(new_user)
+        _set_session_cookie(username.strip())
         st.rerun()
     except ValueError as exc:
         st.error(str(exc))
