@@ -364,6 +364,9 @@ def _login():
     st.session_state.pop("_auth_screen", None)
     st.session_state["user"] = dict(user)
     _set_session_cookie(username)
+    # Auto-sync QB data on login so users always see fresh data
+    if user.get("qb_realm_id") and user.get("qb_refresh_token"):
+        st.session_state["_trigger_qb_sync"] = True
     st.rerun()
 
 

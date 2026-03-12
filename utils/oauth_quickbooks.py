@@ -88,7 +88,15 @@ def exchange_code(code: str) -> dict:
         headers={"Accept": "application/json"},
         timeout=15,
     )
-    resp.raise_for_status()
+    if not resp.ok:
+        try:
+            _body = resp.json()
+        except Exception:
+            _body = resp.text
+        raise RuntimeError(
+            f"Intuit returned HTTP {resp.status_code} — {_body}. "
+            f"redirect_uri used: {cfg['redirect_uri']}"
+        )
     return resp.json()
 
 

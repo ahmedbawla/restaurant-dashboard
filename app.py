@@ -42,46 +42,31 @@ if "code" in _qp and "state" in _qp:
     try:
         _qb_username, _nonce = decode_state(_qp["state"])
         _stored = db.get_user(_qb_username)
-        if _stored and _stored.get("oauth_state") == _nonce:
+        # Try to exchange the code regardless of nonce match — if the exchange
+        # succeeds, we accept the connection.  Nonce mismatch can legitimately
+        # happen when the user refreshes or opens the redirect in a different tab.
+        _try_nonce_match = _stored and _stored.get("oauth_state") == _nonce
+        try:
             _tokens   = exchange_code(_qp["code"])
             _realm_id = _qp.get("realmId", "")
-            db.update_user(
-                _qb_username,
-                qb_realm_id        = _realm_id,
-                qb_refresh_token   = _tokens["refresh_token"],
-                oauth_state        = None,
-                use_simulated_data = False,
-                qb_banking_scope   = True,  # SCOPES now always includes banking
-            )
-            _refreshed_user = db.get_user(_qb_username)
-            st.session_state["user"] = dict(_refreshed_user)
-            st.session_state["qb_just_connected"] = True
-            from auth import _set_session_cookie
-            _set_session_cookie(_qb_username)
-        else:
-            # Nonce mismatch — user may have refreshed or opened a second tab.
-            # Still try to exchange the code; if it succeeds accept the connection.
-            try:
-                _tokens   = exchange_code(_qp["code"])
-                _realm_id = _qp.get("realmId", "")
-                if _realm_id and _tokens.get("refresh_token"):
-                    db.update_user(
-                        _qb_username,
-                        qb_realm_id        = _realm_id,
-                        qb_refresh_token   = _tokens["refresh_token"],
-                        oauth_state        = None,
-                        use_simulated_data = False,
-                        qb_banking_scope   = True,
-                    )
-                    _refreshed_user = db.get_user(_qb_username)
-                    st.session_state["user"] = dict(_refreshed_user)
-                    st.session_state["qb_just_connected"] = True
-                    from auth import _set_session_cookie
-                    _set_session_cookie(_qb_username)
-                else:
-                    _oauth_error = "QuickBooks returned an incomplete token — please try connecting again."
-            except Exception as _nonce_exc:
-                _oauth_error = f"QuickBooks connection failed: {_nonce_exc}"
+            if not _realm_id or not _tokens.get("refresh_token"):
+                _oauth_error = "QuickBooks returned an incomplete response — please try again."
+            else:
+                db.update_user(
+                    _qb_username,
+                    qb_realm_id        = _realm_id,
+                    qb_refresh_token   = _tokens["refresh_token"],
+                    oauth_state        = None,
+                    use_simulated_data = False,
+                    qb_banking_scope   = True,
+                )
+                _refreshed_user = db.get_user(_qb_username)
+                st.session_state["user"]              = dict(_refreshed_user)
+                st.session_state["qb_just_connected"] = True
+                # Cookie set deferred — rendered output before st.rerun() is discarded
+                st.session_state["_pending_set_cookie"] = _qb_username
+        except Exception as _exc:
+            _oauth_error = f"QuickBooks token exchange failed: {_exc}"
     except Exception as _exc:
         _oauth_error = f"QuickBooks connection failed: {_exc}"
     st.query_params.clear()
@@ -104,28 +89,39 @@ user     = require_auth()
 username = user["username"]
 render_sidebar_logout()
 
-# ── QB post-connect sync ──────────────────────────────────────────────────────
-if st.session_state.pop("qb_just_connected", False):
-    from data.sync import sync_all as _sync_all
-    with st.spinner("QuickBooks connected — syncing your data now…"):
-        _qb_res = _sync_all(db.get_user(username))
-    _qb_err  = _qb_res.get("quickbooks", {}).get("error")
-    _qb_rows = _qb_res.get("quickbooks", {}).get("rows", 0)
-    if _qb_err:
-        st.session_state["_sync_flash"] = [
-            {"type": "error", "text": f"QuickBooks sync failed: {_qb_err}"},
-        ]
-    elif _qb_rows == 0:
-        st.session_state["_sync_flash"] = [
-            {"type": "warning", "text": "QuickBooks connected but no data was returned."},
-        ]
-    else:
-        st.session_state["_sync_flash"] = [
-            {"type": "success", "text": f"QuickBooks connected and synced {_qb_rows} rows."},
-        ]
-    st.session_state["user"] = db.get_user(username)
-    st.cache_data.clear()
-    st.rerun()
+# ── Deferred session cookie (set after auth so component renders correctly) ───
+if "_pending_set_cookie" in st.session_state:
+    from auth import _set_session_cookie
+    _set_session_cookie(st.session_state.pop("_pending_set_cookie"))
+
+# ── QB sync — fires on new connection OR whenever a QB-connected user logs in ─
+_run_qb_sync = (
+    st.session_state.pop("qb_just_connected", False)
+    or st.session_state.pop("_trigger_qb_sync", False)
+)
+if _run_qb_sync:
+    _fresh_user = db.get_user(username)
+    if _fresh_user.get("qb_realm_id") and _fresh_user.get("qb_refresh_token"):
+        from data.sync import sync_all as _sync_all
+        with st.spinner("Syncing QuickBooks data…"):
+            _qb_res = _sync_all(_fresh_user)
+        _qb_err  = _qb_res.get("quickbooks", {}).get("error")
+        _qb_rows = _qb_res.get("quickbooks", {}).get("rows", 0)
+        if _qb_err:
+            st.session_state["_sync_flash"] = [
+                {"type": "error", "text": f"QuickBooks sync failed: {_qb_err}"},
+            ]
+        elif _qb_rows == 0:
+            st.session_state["_sync_flash"] = [
+                {"type": "warning", "text": "QuickBooks synced but returned 0 rows — check your date range in QB."},
+            ]
+        else:
+            st.session_state["_sync_flash"] = [
+                {"type": "success", "text": f"QuickBooks synced {_qb_rows} rows."},
+            ]
+        st.session_state["user"] = db.get_user(username)
+        st.cache_data.clear()
+        st.rerun()
 
 # ── Global date range selector ────────────────────────────────────────────────
 min_str, max_str = db.get_date_range(username)
