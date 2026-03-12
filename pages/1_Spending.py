@@ -104,8 +104,13 @@ if _qb_action in ("connect", "reconnect"):
         )
 
 # ── OAuth error from last attempt ─────────────────────────────────────────────
+_last_status = user.get("last_sync_status") or ""
 if "oauth_error" in st.session_state:
     st.error(f"QuickBooks connection error: {st.session_state.pop('oauth_error')}")
+elif _last_status.startswith("QB_OAUTH_ERROR:"):
+    st.error(_last_status)
+    st.info("Try clicking **Connect QuickBooks** above and completing the flow again. "
+            "If the error shows 'invalid_grant', the previous authorisation code expired — just reconnect.")
 
 # ── Data ─────────────────────────────────────────────────────────────────────
 expenses = db.get_expenses(username, start_date=start_date, end_date=end_date)

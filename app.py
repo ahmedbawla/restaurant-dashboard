@@ -71,11 +71,14 @@ if "code" in _qp and "state" in _qp:
         _oauth_error = f"QuickBooks connection failed: {_exc}"
     st.query_params.clear()
     if _oauth_error:
-        # Store as a sync_flash so it's visible in the sidebar on every page
+        # Persist the error to the DB so it survives session resets
+        try:
+            db.update_user(_qb_username, last_sync_status=f"QB_OAUTH_ERROR: {_oauth_error}")
+        except Exception:
+            pass
         st.session_state["_sync_flash"] = [
-            {"type": "error", "text": f"QuickBooks: {_oauth_error}"},
+            {"type": "error", "text": f"QuickBooks connection error: {_oauth_error}"},
         ]
-        # Also keep oauth_error for the Account page
         st.session_state["oauth_error"] = _oauth_error
     st.rerun()
 
