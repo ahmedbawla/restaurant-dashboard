@@ -83,7 +83,6 @@ if "code" in _qp and "state" in _qp:
                 qb_refresh_token   = _tokens["refresh_token"],
                 oauth_state        = None,
                 use_simulated_data = False,
-                qb_banking_scope   = True,
             )
             _refreshed_user = db.get_user(_qb_username)
             # Set user in session state — do NOT rerun, let the script continue.
