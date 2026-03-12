@@ -16,7 +16,7 @@ from data.database import init_db, upsert_df, get_user, update_user
 from data.loader import get_connector
 
 
-def sync_all(user: dict, days_back: int = 90) -> dict:
+def sync_all(user: dict, days_back: int = 365) -> dict:
     """
     Sync all data sources for a user.
 
