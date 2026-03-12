@@ -36,6 +36,26 @@ db.init_db()
 # Intuit redirects back with ?code=...&state=...&realmId=...
 # Handle this BEFORE the auth gate — user may arrive in a fresh session.
 _qp = st.query_params
+
+# DEBUG: log raw query params to DB so we can confirm whether Intuit's redirect
+# is reaching this script with ?code=&state=&realmId= intact.
+_raw_qp = dict(_qp)
+if _raw_qp:
+    try:
+        _debug_keys = list(_raw_qp.keys())
+        _debug_state = _raw_qp.get("state", "")
+        if _debug_state:
+            try:
+                from utils.oauth_quickbooks import decode_state as _ds
+                _du, _ = _ds(_debug_state)
+                db.update_user(_du, last_sync_status=f"QP_DEBUG: keys={_debug_keys} realmId={repr(_raw_qp.get('realmId',''))}")
+            except Exception as _de:
+                pass
+        else:
+            # No state — log to a fixed known user if possible
+            pass
+    except Exception:
+        pass
 if "code" in _qp and "state" in _qp:
     from utils.oauth_quickbooks import decode_state, exchange_code
     _oauth_error = ""
