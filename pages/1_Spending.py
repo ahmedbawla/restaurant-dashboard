@@ -80,17 +80,32 @@ if _qb_action == "disconnect":
 if _qb_action in ("connect", "reconnect"):
     if qb_secrets_configured():
         from utils.oauth_quickbooks import generate_nonce, get_auth_url as qb_auth_url
+        try:
+            import streamlit as _st
+            _redirect_uri = _st.secrets["quickbooks"]["redirect_uri"]
+        except Exception:
+            _redirect_uri = "(not found)"
         _nonce = generate_nonce()
         db.update_user(username, oauth_state=_nonce)
         _auth_url = qb_auth_url(username, _nonce)
-        st.markdown(
-            f'<a href="{_auth_url}" target="_blank" rel="noopener noreferrer">'
-            f'<button style="background:#2da44e;color:white;border:none;padding:0.5rem 1.2rem;'
-            f'border-radius:0.5rem;font-weight:600;font-size:0.9rem;cursor:pointer;width:100%;">'
-            f'Open QuickBooks ↗</button></a>',
-            unsafe_allow_html=True,
+        st.link_button("🔗 Open QuickBooks to Authorise ↗", url=_auth_url, use_container_width=True)
+        st.info(
+            f"**After clicking above**, Intuit will redirect you back to:\n\n"
+            f"`{_redirect_uri}`\n\n"
+            f"Make sure this URL is **registered as a redirect URI** in your "
+            f"[Intuit Developer app](https://developer.intuit.com/app/developer/myapps) "
+            f"and matches your deployed app URL exactly."
         )
-        st.caption("A new tab will open. After authorising, you'll be redirected back.")
+    else:
+        st.error(
+            "QuickBooks OAuth credentials are not configured. "
+            "Add a `[quickbooks]` section with `client_id`, `client_secret`, and `redirect_uri` "
+            "to your Streamlit secrets (app settings → Secrets on Streamlit Cloud)."
+        )
+
+# ── OAuth error from last attempt ─────────────────────────────────────────────
+if "oauth_error" in st.session_state:
+    st.error(f"QuickBooks connection error: {st.session_state.pop('oauth_error')}")
 
 # ── Data ─────────────────────────────────────────────────────────────────────
 expenses = db.get_expenses(username, start_date=start_date, end_date=end_date)
@@ -101,8 +116,17 @@ if expenses.empty:
             "QuickBooks is not connected. Use the **Connect QuickBooks** button above "
             "to start pulling your expense data automatically."
         )
+        if not qb_secrets_configured():
+            st.info(
+                "**Setup required:** Add `[quickbooks]` credentials to Streamlit Secrets "
+                "(client_id, client_secret, redirect_uri). The redirect_uri must exactly match "
+                "what is registered in your Intuit Developer app."
+            )
     else:
-        st.warning("No expense data found for the selected period.")
+        st.warning(
+            "QuickBooks is connected but no expense data was found for the selected period. "
+            "Try clicking **Sync Now** in the sidebar or widening your date range."
+        )
     st.stop()
 
 expenses["date"] = pd.to_datetime(expenses["date"])

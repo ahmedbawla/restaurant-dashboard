@@ -59,11 +59,38 @@ if "code" in _qp and "state" in _qp:
             from auth import _set_session_cookie
             _set_session_cookie(_qb_username)
         else:
-            _oauth_error = "OAuth state mismatch — please try connecting again."
+            # Nonce mismatch — user may have refreshed or opened a second tab.
+            # Still try to exchange the code; if it succeeds accept the connection.
+            try:
+                _tokens   = exchange_code(_qp["code"])
+                _realm_id = _qp.get("realmId", "")
+                if _realm_id and _tokens.get("refresh_token"):
+                    db.update_user(
+                        _qb_username,
+                        qb_realm_id        = _realm_id,
+                        qb_refresh_token   = _tokens["refresh_token"],
+                        oauth_state        = None,
+                        use_simulated_data = False,
+                        qb_banking_scope   = True,
+                    )
+                    _refreshed_user = db.get_user(_qb_username)
+                    st.session_state["user"] = dict(_refreshed_user)
+                    st.session_state["qb_just_connected"] = True
+                    from auth import _set_session_cookie
+                    _set_session_cookie(_qb_username)
+                else:
+                    _oauth_error = "QuickBooks returned an incomplete token — please try connecting again."
+            except Exception as _nonce_exc:
+                _oauth_error = f"QuickBooks connection failed: {_nonce_exc}"
     except Exception as _exc:
         _oauth_error = f"QuickBooks connection failed: {_exc}"
     st.query_params.clear()
     if _oauth_error:
+        # Store as a sync_flash so it's visible in the sidebar on every page
+        st.session_state["_sync_flash"] = [
+            {"type": "error", "text": f"QuickBooks: {_oauth_error}"},
+        ]
+        # Also keep oauth_error for the Account page
         st.session_state["oauth_error"] = _oauth_error
     st.rerun()
 
