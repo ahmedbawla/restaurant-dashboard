@@ -83,8 +83,18 @@ def _render_paychex_upload():
             st.error(f"Could not parse file: {e}")
 
 if weekly_payroll.empty:
-    st.info("No payroll data yet. Upload your Paychex exports to get started.")
-    _render_paychex_upload()
+    all_payroll = db.get_weekly_payroll(username)
+    if not all_payroll.empty:
+        st.warning(
+            f"No payroll data in the selected date range. "
+            f"Your data covers **{all_payroll['week_start'].min()}** → **{all_payroll['week_end'].max()}** — "
+            f"try widening the date range in the sidebar (e.g. switch to **Annual**)."
+        )
+        with st.expander("Update Paychex Data", expanded=False):
+            _render_paychex_upload()
+    else:
+        st.info("No payroll data yet. Upload your Paychex exports to get started.")
+        _render_paychex_upload()
     st.stop()
 
 with st.expander("Update Paychex Data", expanded=False):
