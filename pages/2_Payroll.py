@@ -299,7 +299,8 @@ with st.expander("View All Imported Payroll Data", expanded=False):
             f"{len(export_df):,} records · "
             f"{export_df['Employee Name'].nunique()} employees · "
             f"{export_df['Week Start'].nunique()} pay periods "
-            f"({export_df['Week Start'].min()} → {export_df['Week End'].max()})"
+            f"({export_df['Week Start'].min()} → {export_df['Week End'].max()}) · "
+            f"**Total Gross Pay: {format_currency(all_payroll['gross_pay'].sum())}**"
         )
         st.download_button(
             "Download as CSV",
