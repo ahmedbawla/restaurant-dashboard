@@ -273,4 +273,40 @@ pd_.columns = ["Employee", "Department", "Role", "Employment Type",
 st.dataframe(pd_, use_container_width=True, height=480, hide_index=True)
 
 st.divider()
+
+# ── All imported payroll data ─────────────────────────────────────────────────
+with st.expander("View All Imported Payroll Data", expanded=False):
+    st.caption(
+        "All payroll records currently stored in the system, regardless of the selected "
+        "date range. Use the download button to export as CSV."
+    )
+    all_payroll = db.get_weekly_payroll(username)
+    if all_payroll.empty:
+        st.info("No payroll data imported yet.")
+    else:
+        export_df = all_payroll[[
+            "week_start", "week_end", "employee_id", "employee_name",
+            "dept", "role", "employment_type",
+            "hourly_rate", "regular_hours", "overtime_hours", "total_hours", "gross_pay",
+        ]].copy().sort_values(["week_start", "employee_name"])
+        export_df.columns = [
+            "Week Start", "Week End", "Employee ID", "Employee Name",
+            "Department", "Role", "Employment Type",
+            "Hourly Rate", "Regular Hours", "Overtime Hours", "Total Hours", "Gross Pay",
+        ]
+        st.dataframe(export_df, use_container_width=True, hide_index=True)
+        st.caption(
+            f"{len(export_df):,} records · "
+            f"{export_df['Employee Name'].nunique()} employees · "
+            f"{export_df['Week Start'].nunique()} pay periods "
+            f"({export_df['Week Start'].min()} → {export_df['Week End'].max()})"
+        )
+        st.download_button(
+            "Download as CSV",
+            data=export_df.to_csv(index=False).encode("utf-8"),
+            file_name=f"payroll_{username}.csv",
+            mime="text/csv",
+        )
+
+st.divider()
 st.caption("Confidential  ·  For authorised recipients only")
