@@ -536,7 +536,161 @@ def parse_paychex_pdf_journal(raw: bytes, filename: str = "") -> tuple:
             labor_cost=("labor_cost", "sum"),
         )
 
-    return wp, dl
+    # ── Parse Company Totals summary (last page) ──────────────────────────────
+    summary = {
+        "period_start": None,       "period_end": None,
+        "check_date_start": None,   "check_date_end": None,
+        "headcount": 0,             "transactions": 0,
+        "total_hours": 0.0,         "gross_earnings": 0.0,
+        "ee_social_security": 0.0,  "ee_medicare": 0.0,
+        "ee_fed_income_tax": 0.0,   "ee_state_income_tax": 0.0,
+        "ee_state_disability": 0.0, "ee_state_pfl": 0.0,
+        "ee_other": 0.0,            "total_ee_withholdings": 0.0,
+        "net_pay": 0.0,             "check_amt": 0.0,
+        "direct_deposit_amt": 0.0,
+        "er_social_security": 0.0,  "er_medicare": 0.0,
+        "er_fed_unemployment": 0.0, "er_state_unemployment": 0.0,
+        "er_other": 0.0,
+        "total_er_liability": 0.0,  "total_tax_liability": 0.0,
+    }
+
+    RE_PERIOD = re.compile(
+        r"PeriodStart-EndDates\s+(\d{2}/\d{2}/\d{2})-\s*(\d{2}/\d{2}/\d{2})",
+        re.IGNORECASE,
+    )
+    RE_CHKDTS = re.compile(
+        r"CheckDates\s+(\d{2}/\d{2}/\d{2})-\s*(\d{2}/\d{2}/\d{2})",
+        re.IGNORECASE,
+    )
+
+    in_totals   = False
+    in_employer = False
+
+    for line in lines:
+        s = line.strip()
+
+        # Period / check-date range from any page footer
+        m = RE_PERIOD.search(s)
+        if m:
+            summary["period_start"] = m.group(1)
+            summary["period_end"]   = m.group(2)
+        m = RE_CHKDTS.search(s)
+        if m:
+            summary["check_date_start"] = m.group(1)
+            summary["check_date_end"]   = m.group(2)
+
+        if "COMPANYTOTALS" in s.replace(" ", "").upper():
+            in_totals   = True
+            in_employer = False
+            continue
+
+        if not in_totals:
+            continue
+
+        if "EMPLOYERLIABILITIES" in s.replace(" ", "").upper():
+            in_employer = True
+            continue
+
+        if not in_employer:
+            # "18Person(s) Hourly 2,055.2000 37,810.63 Social Security 2,344.26 CheckAmt 12,870.82"
+            m = re.match(
+                r"(\d+)Person\(s\)\s+Hourly\s+([\d,.]+)\s+([\d,.]+)"
+                r"\s+Social Security\s+([\d,.]+)\s+CheckAmt\s+([\d,.]+)",
+                s, re.IGNORECASE,
+            )
+            if m:
+                summary["headcount"]          = int(m.group(1))
+                summary["total_hours"]        = _f(m.group(2))
+                summary["gross_earnings"]     = _f(m.group(3))
+                summary["ee_social_security"] = _f(m.group(4))
+                summary["check_amt"]          = _f(m.group(5))
+                continue
+
+            # "79Transaction(s) Medicare 548.28 DirDep** 18,859.14"
+            m = re.match(r"(\d+)Transaction\(s\)\s+Medicare\s+([\d,.]+)", s, re.IGNORECASE)
+            if m:
+                summary["transactions"] = int(m.group(1))
+                summary["ee_medicare"]  = _f(m.group(2))
+                m2 = re.search(r"DirDep\S*\s+([\d,.]+)", s, re.IGNORECASE)
+                if m2:
+                    summary["direct_deposit_amt"] = _f(m2.group(1))
+                continue
+
+            m = re.match(r"Fed\s+Income\s+Tax\s+([\d,.]+)", s, re.IGNORECASE)
+            if m:
+                summary["ee_fed_income_tax"] = _f(m.group(1))
+                continue
+
+            # State income tax — any "XX Income Tax NNN" that isn't Federal
+            m = re.match(r"\S+\s+Income\s+Tax\s+([\d,.]+)", s, re.IGNORECASE)
+            if m and "fed" not in s[:5].lower():
+                summary["ee_state_income_tax"] = _f(m.group(1))
+                continue
+
+            m = re.match(r"\S+\s+Disability\s+([\d,.]+)", s, re.IGNORECASE)
+            if m:
+                summary["ee_state_disability"] = _f(m.group(1))
+                continue
+
+            m = re.match(r"\S+\s+PFL\s+([\d,.]+)", s, re.IGNORECASE)
+            if m:
+                summary["ee_state_pfl"] = _f(m.group(1))
+                continue
+
+            # "THIS PERIOD TOTAL 2,055.2000 37,810.63 6,080.67 NetPay 31,729.96"
+            m = re.match(
+                r"THIS\s+PERIOD\s+TOTAL\s+[\d,.]+\s+[\d,.]+\s+([\d,.]+)\s+NetPay\s+([\d,.]+)",
+                s, re.IGNORECASE,
+            )
+            if m:
+                summary["total_ee_withholdings"] = _f(m.group(1))
+                summary["net_pay"]               = _f(m.group(2))
+                continue
+
+        else:  # employer liabilities section
+            m = re.match(r"Social\s+Security\s+([\d,.]+)", s, re.IGNORECASE)
+            if m:
+                summary["er_social_security"] = _f(m.group(1))
+                continue
+
+            m = re.match(r"Medicare\s+([\d,.]+)", s, re.IGNORECASE)
+            if m:
+                summary["er_medicare"] = _f(m.group(1))
+                continue
+
+            m = re.match(r"Fed\s+Unemploy\S*\s+([\d,.]+)", s, re.IGNORECASE)
+            if m:
+                summary["er_fed_unemployment"] = _f(m.group(1))
+                continue
+
+            # State unemployment — any "XX Unemploy NNN" that isn't Federal
+            m = re.match(r"\S+\s+Unemploy\S*\s+([\d,.]+)", s, re.IGNORECASE)
+            if m and "fed" not in s[:5].lower():
+                summary["er_state_unemployment"] = _f(m.group(1))
+                continue
+
+            # Other employer costs (Re-empl Svc, etc.)
+            m = re.match(r"TOTAL\s+EMPLOYER\s+LIABILITY\s+([\d,.]+)", s, re.IGNORECASE)
+            if m:
+                summary["total_er_liability"] = _f(m.group(1))
+                # Back-fill er_other = total - known items
+                summary["er_other"] = max(
+                    round(summary["total_er_liability"]
+                          - summary["er_social_security"]
+                          - summary["er_medicare"]
+                          - summary["er_fed_unemployment"]
+                          - summary["er_state_unemployment"], 2),
+                    0.0,
+                )
+                continue
+
+            m = re.match(r"TOTAL\s+TAX\s+LIABILITY\s+([\d,.]+)", s, re.IGNORECASE)
+            if m:
+                summary["total_tax_liability"] = _f(m.group(1))
+                in_totals = False
+                continue
+
+    return wp, dl, summary
 
 
 def parse_time_attendance(raw: bytes, filename: str = "") -> pd.DataFrame:

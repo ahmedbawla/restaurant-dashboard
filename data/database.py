@@ -188,6 +188,39 @@ def init_db() -> None:
                 username TEXT NOT NULL DEFAULT 'test'
             )
         """))
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS payroll_journal_summaries (
+                id                   SERIAL PRIMARY KEY,
+                username             TEXT NOT NULL,
+                period_start         TEXT,
+                period_end           TEXT,
+                check_date_start     TEXT,
+                check_date_end       TEXT,
+                headcount            INTEGER DEFAULT 0,
+                transactions         INTEGER DEFAULT 0,
+                total_hours          DOUBLE PRECISION DEFAULT 0,
+                gross_earnings       DOUBLE PRECISION DEFAULT 0,
+                ee_social_security   DOUBLE PRECISION DEFAULT 0,
+                ee_medicare          DOUBLE PRECISION DEFAULT 0,
+                ee_fed_income_tax    DOUBLE PRECISION DEFAULT 0,
+                ee_state_income_tax  DOUBLE PRECISION DEFAULT 0,
+                ee_state_disability  DOUBLE PRECISION DEFAULT 0,
+                ee_state_pfl         DOUBLE PRECISION DEFAULT 0,
+                ee_other             DOUBLE PRECISION DEFAULT 0,
+                total_ee_withholdings DOUBLE PRECISION DEFAULT 0,
+                net_pay              DOUBLE PRECISION DEFAULT 0,
+                check_amt            DOUBLE PRECISION DEFAULT 0,
+                direct_deposit_amt   DOUBLE PRECISION DEFAULT 0,
+                er_social_security   DOUBLE PRECISION DEFAULT 0,
+                er_medicare          DOUBLE PRECISION DEFAULT 0,
+                er_fed_unemployment  DOUBLE PRECISION DEFAULT 0,
+                er_state_unemployment DOUBLE PRECISION DEFAULT 0,
+                er_other             DOUBLE PRECISION DEFAULT 0,
+                total_er_liability   DOUBLE PRECISION DEFAULT 0,
+                total_tax_liability  DOUBLE PRECISION DEFAULT 0,
+                imported_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+        """))
 
     # ── Step 2: Column migrations (each in its own transaction so one failure
     #            doesn't block the rest) ────────────────────────────────────────
@@ -637,6 +670,44 @@ def get_cash_flow(
         f"SELECT * FROM cash_flow WHERE username = :u{extra} ORDER BY date",
         {"u": username, **params},
     )
+
+
+def save_payroll_summary(username: str, summary: dict) -> None:
+    """Replace the stored Paychex Payroll Journal summary for a user."""
+    engine = get_engine()
+    with engine.begin() as conn:
+        conn.execute(text("DELETE FROM payroll_journal_summaries WHERE username=:u"), {"u": username})
+        conn.execute(text("""
+            INSERT INTO payroll_journal_summaries (
+                username, period_start, period_end, check_date_start, check_date_end,
+                headcount, transactions, total_hours, gross_earnings,
+                ee_social_security, ee_medicare, ee_fed_income_tax,
+                ee_state_income_tax, ee_state_disability, ee_state_pfl, ee_other,
+                total_ee_withholdings, net_pay, check_amt, direct_deposit_amt,
+                er_social_security, er_medicare, er_fed_unemployment,
+                er_state_unemployment, er_other,
+                total_er_liability, total_tax_liability
+            ) VALUES (
+                :username, :period_start, :period_end, :check_date_start, :check_date_end,
+                :headcount, :transactions, :total_hours, :gross_earnings,
+                :ee_social_security, :ee_medicare, :ee_fed_income_tax,
+                :ee_state_income_tax, :ee_state_disability, :ee_state_pfl, :ee_other,
+                :total_ee_withholdings, :net_pay, :check_amt, :direct_deposit_amt,
+                :er_social_security, :er_medicare, :er_fed_unemployment,
+                :er_state_unemployment, :er_other,
+                :total_er_liability, :total_tax_liability
+            )
+        """), {"username": username, **summary})
+
+
+def get_payroll_summary(username: str) -> dict | None:
+    """Return the stored Paychex Payroll Journal summary for a user, or None."""
+    engine = get_engine()
+    with engine.connect() as conn:
+        row = conn.execute(text(
+            "SELECT * FROM payroll_journal_summaries WHERE username=:u ORDER BY imported_at DESC LIMIT 1"
+        ), {"u": username}).mappings().first()
+    return dict(row) if row else None
 
 
 @_streamlit_cache(ttl=300)

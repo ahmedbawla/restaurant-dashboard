@@ -72,9 +72,10 @@ def _render_paychex_upload():
     if uploaded:
         try:
             if uploaded.name.lower().endswith(".pdf"):
-                wp_df, dl_df = parse_paychex_pdf_journal(uploaded.getvalue(), uploaded.name)
+                wp_df, dl_df, _summary = parse_paychex_pdf_journal(uploaded.getvalue(), uploaded.name)
             else:
                 wp_df, dl_df = parse_paychex_labor_cost(uploaded.getvalue(), uploaded.name)
+                _summary = None
             st.success(
                 f"Parsed **{len(wp_df)} employee-week rows** across "
                 f"**{wp_df['week_start'].nunique()} pay periods** "
@@ -91,6 +92,8 @@ def _render_paychex_upload():
                     _conn.execute(_text("DELETE FROM daily_labor    WHERE username=:u"), {"u": username})
                 db.upsert_df(dl_df, "daily_labor",    username)
                 db.upsert_df(wp_df, "weekly_payroll", username)
+                if _summary:
+                    db.save_payroll_summary(username, _summary)
                 db.update_user(username, use_simulated_data=False)
                 st.session_state["user"] = db.get_user(username)
                 st.cache_data.clear()
@@ -154,6 +157,72 @@ with k5:
               help="Number of weekly pay periods in the selected range.")
 
 st.divider()
+
+# ── Paychex Payroll Journal Summary ──────────────────────────────────────────
+_pjs = db.get_payroll_summary(username)
+if _pjs:
+    _fmt_date = lambda d: pd.to_datetime(d, format="%m/%d/%y").strftime("%b %d, %Y") if d else "—"
+    _period_label = f"{_fmt_date(_pjs.get('period_start'))} – {_fmt_date(_pjs.get('period_end'))}"
+    _check_label  = f"{_fmt_date(_pjs.get('check_date_start'))} – {_fmt_date(_pjs.get('check_date_end'))}"
+
+    section_header(
+        "Payroll Journal Report",
+        help=(
+            "Totals extracted directly from the uploaded Paychex Payroll Journal PDF. "
+            "These figures cover the full report period regardless of the date filter above."
+        ),
+    )
+    st.caption(f"Work period: **{_period_label}**  ·  Check dates: **{_check_label}**")
+
+    j1, j2, j3, j4, j5 = st.columns(5)
+    with j1:
+        st.metric("Employees", f"{_pjs.get('headcount', 0)}")
+    with j2:
+        st.metric("Transactions", f"{_pjs.get('transactions', 0)}")
+    with j3:
+        st.metric("Total Hours", f"{_pjs.get('total_hours', 0):,.1f}")
+    with j4:
+        st.metric("Gross Earnings", format_currency(_pjs.get("gross_earnings", 0)))
+    with j5:
+        st.metric("Net Pay", format_currency(_pjs.get("net_pay", 0)),
+                  help=f"Check: {format_currency(_pjs.get('check_amt', 0))}  ·  "
+                       f"Direct Deposit: {format_currency(_pjs.get('direct_deposit_amt', 0))}")
+
+    _wh_col, _er_col = st.columns(2)
+    with _wh_col:
+        st.caption("**Employee Withholdings**")
+        _wh_rows = [
+            ("Social Security",  _pjs.get("ee_social_security",  0)),
+            ("Medicare",         _pjs.get("ee_medicare",         0)),
+            ("Fed Income Tax",   _pjs.get("ee_fed_income_tax",   0)),
+            ("State Income Tax", _pjs.get("ee_state_income_tax", 0)),
+            ("State Disability", _pjs.get("ee_state_disability", 0)),
+            ("State PFL",        _pjs.get("ee_state_pfl",        0)),
+        ]
+        if _pjs.get("ee_other", 0):
+            _wh_rows.append(("Other", _pjs["ee_other"]))
+        _wh_rows.append(("**Total Withheld**", _pjs.get("total_ee_withholdings", 0)))
+        _wh_df = pd.DataFrame(_wh_rows, columns=["Withholding", "Amount"])
+        _wh_df["Amount"] = _wh_df["Amount"].apply(lambda x: f"${x:,.2f}")
+        st.dataframe(_wh_df, use_container_width=True, hide_index=True)
+
+    with _er_col:
+        st.caption("**Employer Liabilities**")
+        _er_rows = [
+            ("Social Security",    _pjs.get("er_social_security",    0)),
+            ("Medicare",           _pjs.get("er_medicare",           0)),
+            ("Fed Unemployment",   _pjs.get("er_fed_unemployment",   0)),
+            ("State Unemployment", _pjs.get("er_state_unemployment", 0)),
+        ]
+        if _pjs.get("er_other", 0):
+            _er_rows.append(("Other", _pjs["er_other"]))
+        _er_rows.append(("**Total ER Liability**", _pjs.get("total_er_liability", 0)))
+        _er_df = pd.DataFrame(_er_rows, columns=["Liability", "Amount"])
+        _er_df["Amount"] = _er_df["Amount"].apply(lambda x: f"${x:,.2f}")
+        st.dataframe(_er_df, use_container_width=True, hide_index=True)
+        st.caption(f"Total Tax Liability (EE + ER): **{format_currency(_pjs.get('total_tax_liability', 0))}**")
+
+    st.divider()
 
 # ── Payroll cost breakdown (QB reconciliation) ────────────────────────────────
 _qb_expenses = db.get_expenses(username, start_date=start_date, end_date=end_date)
