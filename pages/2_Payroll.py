@@ -143,6 +143,96 @@ with k5:
 
 st.divider()
 
+# ── Payroll cost breakdown (QB reconciliation) ────────────────────────────────
+_qb_expenses = db.get_expenses(username, start_date=start_date, end_date=end_date)
+_qb_payroll  = _qb_expenses[
+    _qb_expenses["category"].str.contains(
+        "payroll|salary|salaries|wages|contract labor", case=False, na=False
+    )
+].copy()
+
+if not _qb_payroll.empty:
+    def _qb_type(row):
+        desc = str(row.get("description", "")).upper()
+        cat  = str(row.get("category",    "")).lower()
+        if "tps/taxes" in desc or "taxes" in desc:
+            return "Employer Taxes"
+        elif "eib/invoice" in desc or "invoice" in desc:
+            return "Processing Fees"
+        elif "contract" in cat:
+            return "Contract Labor"
+        else:
+            return "Net Employee Pay"
+
+    _qb_payroll["_type"] = _qb_payroll.apply(_qb_type, axis=1)
+    _net_pay     = _qb_payroll[_qb_payroll["_type"] == "Net Employee Pay"]["amount"].sum()
+    _emp_taxes   = _qb_payroll[_qb_payroll["_type"] == "Employer Taxes"]["amount"].sum()
+    _fees        = _qb_payroll[_qb_payroll["_type"] == "Processing Fees"]["amount"].sum()
+    _contract    = _qb_payroll[_qb_payroll["_type"] == "Contract Labor"]["amount"].sum()
+    _withheld    = max(period_payroll - _net_pay, 0)
+
+    section_header(
+        "Payroll Cost Breakdown",
+        help=(
+            "Gross wages from Paychex vs. actual cash out from QuickBooks. "
+            "Employee withholdings are estimated as gross wages minus net employee pay — "
+            "they are collected by Paychex and remitted directly to the IRS, "
+            "so they do not appear as an expense in QuickBooks."
+        ),
+    )
+
+    b1, b2, b3, b4, b5 = st.columns(5)
+    with b1:
+        st.metric(
+            "Gross Wages",
+            format_currency(period_payroll),
+            help="Total gross pay per Paychex records (before any deductions).",
+        )
+    with b2:
+        st.metric(
+            "Employee Withholdings",
+            format_currency(_withheld),
+            help=(
+                f"Estimated taxes withheld from employees' pay "
+                f"({_withheld/period_payroll*100:.1f}% of gross). "
+                "Remitted to IRS by Paychex — not an expense in QuickBooks."
+            ) if period_payroll else "N/A",
+        )
+    with b3:
+        st.metric(
+            "Net Employee Pay",
+            format_currency(_net_pay),
+            help="Actual cash paid to employees (direct deposits + manual checks) per QuickBooks.",
+        )
+    with b4:
+        st.metric(
+            "Employer Taxes",
+            format_currency(_emp_taxes),
+            help="Employer's share of payroll taxes (FICA, FUTA, SUTA) per QuickBooks.",
+        )
+    with b5:
+        if _contract:
+            st.metric(
+                "Contract Labor",
+                format_currency(_contract),
+                help="Payments to contractors recorded in QuickBooks (not in Paychex).",
+            )
+        else:
+            st.metric(
+                "Processing Fees",
+                format_currency(_fees),
+                help="Paychex service charges per QuickBooks.",
+            )
+
+    with st.expander("QuickBooks Payroll Detail", expanded=False):
+        _disp = _qb_payroll[["date", "_type", "vendor", "amount", "description"]].copy()
+        _disp["amount"] = _disp["amount"].apply(lambda x: f"${x:,.2f}")
+        _disp = _disp.sort_values("date")
+        _disp.columns = ["Date", "Type", "Vendor", "Amount", "Description"]
+        st.dataframe(_disp, use_container_width=True, hide_index=True)
+
+    st.divider()
+
 # ── Weekly payroll trend ──────────────────────────────────────────────────────
 section_header("Weekly Payroll Trend", help="Total gross pay per pay period across the selected range.")
 weekly_totals = (
