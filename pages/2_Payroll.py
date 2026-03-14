@@ -44,11 +44,16 @@ _GRID = dict(gridcolor="rgba(255,255,255,0.06)", zerolinecolor="rgba(255,255,255
 # ── Data ─────────────────────────────────────────────────────────────────────
 weekly_payroll = db.get_weekly_payroll(username)
 
-# Filter to pay periods that overlap with the selected date range
-if start_date:
-    weekly_payroll = weekly_payroll[weekly_payroll["week_end"] >= start_date]
-if end_date:
-    weekly_payroll = weekly_payroll[weekly_payroll["week_start"] <= end_date]
+# Filter by pay date (day after week_end) — a period ending 03/04 is paid 03/05
+# so it belongs to March, not February.
+if not weekly_payroll.empty:
+    weekly_payroll["pay_date"] = (
+        pd.to_datetime(weekly_payroll["week_end"]) + pd.Timedelta(days=1)
+    ).dt.strftime("%Y-%m-%d")
+    if start_date:
+        weekly_payroll = weekly_payroll[weekly_payroll["pay_date"] >= start_date]
+    if end_date:
+        weekly_payroll = weekly_payroll[weekly_payroll["pay_date"] <= end_date]
 
 # ── Paychex upload ────────────────────────────────────────────────────────────
 def _render_paychex_upload():
@@ -85,9 +90,11 @@ def _render_paychex_upload():
 if weekly_payroll.empty:
     all_payroll = db.get_weekly_payroll(username)
     if not all_payroll.empty:
+        _min_pay = (pd.to_datetime(all_payroll["week_end"].min()) + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
+        _max_pay = (pd.to_datetime(all_payroll["week_end"].max()) + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
         st.warning(
             f"No payroll data in the selected date range. "
-            f"Your data covers **{all_payroll['week_start'].min()}** → **{all_payroll['week_end'].max()}** — "
+            f"Your pay dates cover **{_min_pay}** → **{_max_pay}** — "
             f"try widening the date range in the sidebar (e.g. switch to **Annual**)."
         )
         with st.expander("Update Paychex Data", expanded=False):
