@@ -398,21 +398,19 @@ def parse_paychex_pdf_journal(raw: bytes, filename: str = "") -> tuple:
                 lines.extend(text.splitlines())
 
     # ── Regex patterns ────────────────────────────────────────────────────────
-    # Employee name + first Hourly pay line: "Lastname, Firstname  Hourly  15.00  40.00  600.00"
+    # Employee name + first Hourly line: "Lastname,Firstname Hourly 16.0000 18.2500 292.00 ..."
+    # Note: Paychex PDF has no space after the comma in the name field.
     RE_EMP = re.compile(
-        r"^([A-Z][A-Za-z'\-]+,\s+[A-Z][A-Za-z'.\s\-]+?)\s+"
-        r"Hourly\s+([\d.]+)\s+([\d,.]+)\s+([\d,.]+)",
-        re.IGNORECASE,
+        r"^([A-Z][A-Za-z'\-]+,[A-Za-z\s\.]+?)\s+Hourly\s+([\d.]+)\s+([\d.]+)\s+([\d,.]+)"
     )
-    # Additional Hourly lines (overtime, bonus, etc.): "Hourly  15.00  8.00  120.00"
+    # Continuation Hourly line for next check of same employee: "Hourly 16.75 25.0000 418.75 ..."
     RE_HOURLY = re.compile(
-        r"^Hourly\s+([\d.]+)\s+([\d,.]+)\s+([\d,.]+)",
-        re.IGNORECASE,
+        r"^Hourly\s+([\d.]+)\s+([\d.]+)\s+([\d,.]+)"
     )
-    # Check summary: "CHECK DATE 01/30/26  80.00  1200.00  250.00"
+    # Check summary (no space between CHECK and DATE in Paychex PDF):
+    # "CHECKDATE03/13/26 18.2500 292.00 30.03 NetPay 261.97"
     RE_CHECK = re.compile(
-        r"CHECK\s+DATE\s+(\d{2}/\d{2}/\d{2})\s+([\d,.]+)\s+([\d,.]+)\s+([\d,.]+)",
-        re.IGNORECASE,
+        r"CHECKDATE(\d{2}/\d{2}/\d{2})\s+([\d.]+)\s+([\d,.]+)\s+([\d,.]+)"
     )
 
     def _f(s: str) -> float:
@@ -432,7 +430,8 @@ def parse_paychex_pdf_journal(raw: bytes, filename: str = "") -> tuple:
 
         m_emp = RE_EMP.match(line)
         if m_emp:
-            cur_name  = m_emp.group(1).strip()
+            # New employee — update name and start accumulating this check
+            cur_name  = m_emp.group(1).replace(",", ", ", 1).strip()
             cur_rate  = _f(m_emp.group(2))
             cur_hours = _f(m_emp.group(3))
             cur_gross = _f(m_emp.group(4))
@@ -441,6 +440,7 @@ def parse_paychex_pdf_journal(raw: bytes, filename: str = "") -> tuple:
         if cur_name:
             m_hourly = RE_HOURLY.match(line)
             if m_hourly:
+                # Next check period for the same employee
                 cur_hours += _f(m_hourly.group(2))
                 cur_gross += _f(m_hourly.group(3))
                 rate = _f(m_hourly.group(1))
@@ -460,7 +460,8 @@ def parse_paychex_pdf_journal(raw: bytes, filename: str = "") -> tuple:
                     check_dt = pd.to_datetime(check_date_str, errors="coerce")
 
                 if pd.isna(check_dt):
-                    cur_name = None
+                    cur_hours = 0.0
+                    cur_gross = 0.0
                     continue
 
                 total_hours = hours_check if hours_check > 0 else cur_hours
@@ -479,7 +480,7 @@ def parse_paychex_pdf_journal(raw: bytes, filename: str = "") -> tuple:
                     "week_start":    week_start_dt.strftime("%Y-%m-%d"),
                 })
 
-                cur_name  = None
+                # Keep cur_name — same employee may have more checks on next lines
                 cur_rate  = 0.0
                 cur_hours = 0.0
                 cur_gross = 0.0
