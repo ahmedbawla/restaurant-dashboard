@@ -159,7 +159,7 @@ _qb_payroll  = _qb_expenses[
 
 if not _qb_payroll.empty:
     def _qb_type(row):
-        desc = str(row.get("description", "")).upper()
+        desc = str(row.get("description", "")).lower()
         cat  = str(row.get("category",    "")).lower()
         if "tps/taxes" in desc or "taxes" in desc:
             return "Employer Taxes"
