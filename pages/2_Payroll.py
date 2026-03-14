@@ -83,8 +83,14 @@ def _render_paychex_upload():
                 f"Total gross pay: **${wp_df['gross_pay'].sum():,.2f}**"
             )
             if st.button("Import to Dashboard", key="paychex_import_btn", type="primary"):
-                db.merge_df(dl_df, "daily_labor",    username, date_col="date")
-                db.merge_df(wp_df, "weekly_payroll", username, date_col="week_start")
+                # Replace all existing payroll data — avoids double-counting when
+                # switching between CSV and PDF imports (they use different employee_id formats)
+                from sqlalchemy import text as _text
+                with db.get_engine().begin() as _conn:
+                    _conn.execute(_text("DELETE FROM weekly_payroll WHERE username=:u"), {"u": username})
+                    _conn.execute(_text("DELETE FROM daily_labor    WHERE username=:u"), {"u": username})
+                db.upsert_df(dl_df, "daily_labor",    username)
+                db.upsert_df(wp_df, "weekly_payroll", username)
                 db.update_user(username, use_simulated_data=False)
                 st.session_state["user"] = db.get_user(username)
                 st.cache_data.clear()
