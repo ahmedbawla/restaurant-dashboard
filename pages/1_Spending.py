@@ -136,6 +136,28 @@ if expenses.empty:
 
 expenses["date"] = pd.to_datetime(expenses["date"])
 
+# ── Category normalisation ─────────────────────────────────────────────────────
+# QB subcategories (e.g. "Office expenses:Software & apps") are rolled up to a
+# clean parent name so charts and tables stay concise.
+_CAT_MAP = {
+    "Payroll expenses":              "Payroll Expenses",
+    "Cost of Goods Sold":            "Cost of Goods Sold",
+    "Utilities":                     "Utilities",
+    "Office expenses":               "Office Expenses",
+    "Legal & accounting services":   "Legal & Accounting",
+    "Shareholders' equity":          "Owner Equity",
+    "General business expenses":     "General Business Expenses",
+    "Vehicle expenses":              "Vehicle Expenses",
+    "PERMITTING FEES":               "Permitting Fees",
+    "Contract labor":                "Contract Labor",
+}
+
+def _normalise_cat(cat: str) -> str:
+    parent = cat.split(":")[0].strip()
+    return _CAT_MAP.get(parent, parent)
+
+expenses["category"] = expenses["category"].apply(_normalise_cat)
+
 # ── Pending review notice ──────────────────────────────────────────────────────
 _pending_mask = expenses["category"] == "Pending Review"
 if _pending_mask.any():
