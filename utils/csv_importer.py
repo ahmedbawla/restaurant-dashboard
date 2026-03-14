@@ -368,6 +368,176 @@ def parse_paychex_labor_cost(raw: bytes, filename: str = "") -> tuple:
     return wp, dl
 
 
+def parse_paychex_pdf_journal(raw: bytes, filename: str = "") -> tuple:
+    """
+    Parse a Paychex Payroll Journal PDF export.
+
+    Supports the standard Paychex Flex 'Payroll Journal' PDF report.
+    Extracts one row per employee-check record.
+
+    Returns (weekly_payroll_df, daily_labor_df) in the same schema as
+    parse_paychex_labor_cost.
+    """
+    import re
+    from datetime import timedelta
+
+    try:
+        import pdfplumber
+    except ImportError:
+        raise ImportError(
+            "pdfplumber is required for PDF payroll imports. "
+            "It has been added to requirements.txt — redeploy the app to install it."
+        )
+
+    # ── Extract all text lines from the PDF ──────────────────────────────────
+    lines = []
+    with pdfplumber.open(io.BytesIO(raw)) as pdf:
+        for page in pdf.pages:
+            text = page.extract_text()
+            if text:
+                lines.extend(text.splitlines())
+
+    # ── Regex patterns ────────────────────────────────────────────────────────
+    # Employee name + first Hourly pay line: "Lastname, Firstname  Hourly  15.00  40.00  600.00"
+    RE_EMP = re.compile(
+        r"^([A-Z][A-Za-z'\-]+,\s+[A-Z][A-Za-z'.\s\-]+?)\s+"
+        r"Hourly\s+([\d.]+)\s+([\d,.]+)\s+([\d,.]+)",
+        re.IGNORECASE,
+    )
+    # Additional Hourly lines (overtime, bonus, etc.): "Hourly  15.00  8.00  120.00"
+    RE_HOURLY = re.compile(
+        r"^Hourly\s+([\d.]+)\s+([\d,.]+)\s+([\d,.]+)",
+        re.IGNORECASE,
+    )
+    # Check summary: "CHECK DATE 01/30/26  80.00  1200.00  250.00"
+    RE_CHECK = re.compile(
+        r"CHECK\s+DATE\s+(\d{2}/\d{2}/\d{2})\s+([\d,.]+)\s+([\d,.]+)\s+([\d,.]+)",
+        re.IGNORECASE,
+    )
+
+    def _f(s: str) -> float:
+        return float(str(s).replace(",", "").strip() or 0)
+
+    # ── Parse ─────────────────────────────────────────────────────────────────
+    records  = []
+    cur_name  = None
+    cur_rate  = 0.0
+    cur_hours = 0.0
+    cur_gross = 0.0
+
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+
+        m_emp = RE_EMP.match(line)
+        if m_emp:
+            cur_name  = m_emp.group(1).strip()
+            cur_rate  = _f(m_emp.group(2))
+            cur_hours = _f(m_emp.group(3))
+            cur_gross = _f(m_emp.group(4))
+            continue
+
+        if cur_name:
+            m_hourly = RE_HOURLY.match(line)
+            if m_hourly:
+                cur_hours += _f(m_hourly.group(2))
+                cur_gross += _f(m_hourly.group(3))
+                rate = _f(m_hourly.group(1))
+                if rate > cur_rate:
+                    cur_rate = rate
+                continue
+
+            m_check = RE_CHECK.search(line)
+            if m_check:
+                check_date_str = m_check.group(1)   # MM/DD/YY
+                hours_check    = _f(m_check.group(2))
+                gross_check    = _f(m_check.group(3))
+
+                try:
+                    check_dt = pd.to_datetime(check_date_str, format="%m/%d/%y")
+                except Exception:
+                    check_dt = pd.to_datetime(check_date_str, errors="coerce")
+
+                if pd.isna(check_dt):
+                    cur_name = None
+                    continue
+
+                total_hours = hours_check if hours_check > 0 else cur_hours
+                gross_pay   = gross_check if gross_check > 0 else cur_gross
+
+                # week_end = day before check date; week_start = 6 days before that
+                week_end_dt   = check_dt - pd.Timedelta(days=1)
+                week_start_dt = check_dt - pd.Timedelta(days=7)
+
+                records.append({
+                    "employee_name": cur_name,
+                    "hourly_rate":   cur_rate,
+                    "total_hours":   total_hours,
+                    "gross_pay":     gross_pay,
+                    "week_end":      week_end_dt.strftime("%Y-%m-%d"),
+                    "week_start":    week_start_dt.strftime("%Y-%m-%d"),
+                })
+
+                cur_name  = None
+                cur_rate  = 0.0
+                cur_hours = 0.0
+                cur_gross = 0.0
+
+    if not records:
+        raise ValueError(
+            "No employee check records found in the PDF. "
+            "Please make sure this is a Paychex Payroll Journal report."
+        )
+
+    df = pd.DataFrame(records)
+
+    # ── Build weekly_payroll ──────────────────────────────────────────────────
+    df["employee_id"]     = df["employee_name"].str.replace(r"\s+", "", regex=True).str[:12]
+    df["dept"]            = "General"
+    df["role"]            = "Hourly"
+    df["employment_type"] = "Hourly"
+    df["overtime_hours"]  = (df["total_hours"] - 40).clip(lower=0).round(4)
+    df["regular_hours"]   = (df["total_hours"] - df["overtime_hours"]).round(4)
+
+    wp = df[[
+        "week_start", "week_end", "employee_id", "employee_name", "dept", "role",
+        "employment_type", "hourly_rate", "regular_hours", "overtime_hours",
+        "total_hours", "gross_pay",
+    ]].reset_index(drop=True)
+
+    # ── Build daily_labor ─────────────────────────────────────────────────────
+    daily_rows = []
+    for _, row in df.iterrows():
+        try:
+            ps = pd.to_datetime(row["week_start"]).date()
+            pe = pd.to_datetime(row["week_end"]).date()
+        except Exception:
+            continue
+        n_days     = (pe - ps).days + 1
+        daily_hrs  = row["total_hours"] / n_days if n_days else 0
+        daily_cost = row["gross_pay"]   / n_days if n_days else 0
+        for i in range(n_days):
+            day = ps + timedelta(days=i)
+            daily_rows.append({
+                "date":       day.isoformat(),
+                "dept":       "General",
+                "hours":      round(daily_hrs,  4),
+                "labor_cost": round(daily_cost, 4),
+            })
+
+    dl = pd.DataFrame(daily_rows) if daily_rows else pd.DataFrame(
+        columns=["date", "dept", "hours", "labor_cost"]
+    )
+    if not dl.empty:
+        dl = dl.groupby(["date", "dept"], as_index=False).agg(
+            hours=("hours", "sum"),
+            labor_cost=("labor_cost", "sum"),
+        )
+
+    return wp, dl
+
+
 def parse_time_attendance(raw: bytes, filename: str = "") -> pd.DataFrame:
     """
     Parse a Paychex Time & Attendance export.

@@ -57,24 +57,30 @@ if not weekly_payroll.empty:
 
 # ── Paychex upload ────────────────────────────────────────────────────────────
 def _render_paychex_upload():
-    from utils.csv_importer import parse_paychex_labor_cost
-    st.markdown("**Upload Paychex Payroll Labor Cost CSV**")
+    from utils.csv_importer import parse_paychex_labor_cost, parse_paychex_pdf_journal
+    st.markdown("**Upload Paychex Payroll Data**")
     st.caption(
-        "In Paychex Flex: Reports → Payroll → Payroll Labor Cost → Download (CSV). "
+        "Accepted formats:  \n"
+        "• **PDF** — Paychex Payroll Journal (recommended): Payroll → Reports → Payroll Journal → Download PDF  \n"
+        "• **CSV/XLSX** — Payroll Labor Cost export: Reports → Payroll → Payroll Labor Cost → Download CSV  \n"
         "Export as wide a date range as you have — data is merged, nothing gets overwritten."
     )
     uploaded = st.file_uploader(
-        "Payroll Labor Cost CSV", type=["csv", "xlsx"],
+        "Payroll file", type=["csv", "xlsx", "pdf"],
         key="paychex_upload", label_visibility="collapsed",
     )
     if uploaded:
         try:
-            wp_df, dl_df = parse_paychex_labor_cost(uploaded.getvalue(), uploaded.name)
+            if uploaded.name.lower().endswith(".pdf"):
+                wp_df, dl_df = parse_paychex_pdf_journal(uploaded.getvalue(), uploaded.name)
+            else:
+                wp_df, dl_df = parse_paychex_labor_cost(uploaded.getvalue(), uploaded.name)
             st.success(
                 f"Parsed **{len(wp_df)} employee-week rows** across "
                 f"**{wp_df['week_start'].nunique()} pay periods** "
                 f"({wp_df['week_start'].min()} → {wp_df['week_end'].max()})  ·  "
-                f"{wp_df['employee_name'].nunique()} employees"
+                f"{wp_df['employee_name'].nunique()} employees  ·  "
+                f"Total gross pay: **${wp_df['gross_pay'].sum():,.2f}**"
             )
             if st.button("Import to Dashboard", key="paychex_import_btn", type="primary"):
                 db.merge_df(dl_df, "daily_labor",    username, date_col="date")
