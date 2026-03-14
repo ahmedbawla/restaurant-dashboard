@@ -159,11 +159,9 @@ _qb_payroll  = _qb_expenses[
 
 if not _qb_payroll.empty:
     def _qb_type(row):
-        desc = str(row.get("description", "")).lower()
+        desc = str(row.get("description", "")).upper()
         cat  = str(row.get("category",    "")).lower()
-        if "tps/taxes" in desc or "taxes" in desc:
-            return "Employer Taxes"
-        elif "eib/invoice" in desc or "invoice" in desc:
+        if "eib/invoice" in desc or "invoice" in desc:
             return "Processing Fees"
         elif "contract" in cat:
             return "Contract Labor"
@@ -171,11 +169,15 @@ if not _qb_payroll.empty:
             return "Net Employee Pay"
 
     _qb_payroll["_type"] = _qb_payroll.apply(_qb_type, axis=1)
-    _net_pay     = _qb_payroll[_qb_payroll["_type"] == "Net Employee Pay"]["amount"].sum()
-    _emp_taxes   = _qb_payroll[_qb_payroll["_type"] == "Employer Taxes"]["amount"].sum()
-    _fees        = _qb_payroll[_qb_payroll["_type"] == "Processing Fees"]["amount"].sum()
-    _contract    = _qb_payroll[_qb_payroll["_type"] == "Contract Labor"]["amount"].sum()
-    _withheld    = max(period_payroll - _net_pay, 0)
+    _net_pay  = _qb_payroll[_qb_payroll["_type"] == "Net Employee Pay"]["amount"].sum()
+    _fees     = _qb_payroll[_qb_payroll["_type"] == "Processing Fees"]["amount"].sum()
+    _contract = _qb_payroll[_qb_payroll["_type"] == "Contract Labor"]["amount"].sum()
+    _withheld = max(period_payroll - _net_pay, 0)
+
+    # Labor cost % — gross wages as a share of revenue for the same period
+    _sales_df   = db.get_daily_sales(username, start_date=start_date, end_date=end_date)
+    _period_rev = _sales_df["revenue"].sum() if not _sales_df.empty else 0
+    _labor_pct  = (period_payroll / _period_rev * 100) if _period_rev > 0 else None
 
     section_header(
         "Payroll Cost Breakdown",
@@ -212,9 +214,13 @@ if not _qb_payroll.empty:
         )
     with b4:
         st.metric(
-            "Employer Taxes",
-            format_currency(_emp_taxes),
-            help="Employer's share of payroll taxes (FICA, FUTA, SUTA) per QuickBooks.",
+            "Labor Cost %",
+            f"{_labor_pct:.1f}%" if _labor_pct is not None else "N/A",
+            help=(
+                "Gross payroll as a percentage of revenue for the selected period. "
+                "Industry target for restaurants is typically 25–35%."
+                + (f" Revenue used: {format_currency(_period_rev)}." if _period_rev else "")
+            ),
         )
     with b5:
         if _contract:
