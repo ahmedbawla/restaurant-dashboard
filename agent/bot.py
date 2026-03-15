@@ -205,25 +205,42 @@ async def cmd_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 import base64
 import requests as _requests
 
-_DEV_SYSTEM = f"""You are a senior full-stack developer and the primary expert on this Streamlit restaurant dashboard codebase (repo: {GITHUB_REPO}).
 
-When answering questions, READ THE ACTUAL CODE using your tools before responding — never guess at implementation details.
-You have read-only access to the repository via the GitHub API.
+async def _send_reply(update: Update, text: str):
+    """Split a long reply on blank lines and send as separate Telegram messages."""
+    # Split into paragraphs, group into chunks ≤ 1000 chars
+    paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
+    chunks, current = [], ""
+    for para in paragraphs:
+        if len(current) + len(para) + 2 > 1000 and current:
+            chunks.append(current.strip())
+            current = para
+        else:
+            current = (current + "\n\n" + para).strip() if current else para
+    if current:
+        chunks.append(current.strip())
 
-The app is built with: Python, Streamlit, SQLAlchemy, Supabase/PostgreSQL, Plotly, Pandas.
-Pages: Summary, Spending (QuickBooks OAuth), Payroll (Paychex PDF/CSV), Inventory, Sales, Reports, Account.
-There is also an autonomous coding agent in the agent/ directory (that's you).
+    for chunk in chunks:
+        try:
+            await update.message.reply_text(chunk, parse_mode="Markdown")
+        except Exception:
+            await update.message.reply_text(chunk)
 
-Help the developer:
-- Debug issues by reading the relevant code
-- Explain how specific features are implemented
-- Suggest improvements with specific code references
-- Understand data flow and architecture
-- Review recent changes (use git log/diff via list_files on .git or read CHANGELOG)
+_DEV_SYSTEM = f"""You are a senior full-stack developer and co-owner of a Streamlit restaurant analytics dashboard (repo: {GITHUB_REPO}).
 
-Be precise — cite file names and line numbers when relevant.
-Keep answers concise but technically complete.
-If asked to make a change, explain exactly what to edit and where, or suggest using /focus + /run."""
+READ THE ACTUAL CODE using your tools before answering — never guess.
+You have read-only access via the GitHub API.
+
+Stack: Python, Streamlit, SQLAlchemy, Supabase/PostgreSQL, Plotly, Pandas.
+Pages: Summary, Spending (QuickBooks), Payroll (Paychex), Inventory, Sales, Reports, Account.
+
+## Response style — CRITICAL
+- Be concise. Max 3-4 short paragraphs or a tight bullet list.
+- Use plain language, not formal documentation.
+- Break your answer into short sections separated by blank lines — NOT one long block.
+- If listing improvements, use numbered bullets: 1. 2. 3. — one idea per line.
+- Never pad with intros like "Great question!" or summaries restating what you just said.
+- If asked to make a change, say the file + line + exactly what to edit, then suggest /focus + /run."""
 
 _CHAT_TOOLS = [
     {
@@ -360,18 +377,9 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                     reply = block.text.strip()
                     break
 
-        # Telegram message limit is 4096 chars
-        if len(reply) > 4000:
-            reply = reply[:3997] + "…"
-
         state["chat_history"] = history
         _save(state)
-
-        # Try Markdown first; fall back to plain text if Telegram rejects it
-        try:
-            await update.message.reply_text(reply, parse_mode="Markdown")
-        except Exception:
-            await update.message.reply_text(reply)
+        await _send_reply(update, reply)
 
     except Exception as e:
         logger.exception("Chat handler failed")
@@ -432,9 +440,6 @@ async def handle_photo(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 reply = block.text.strip()
                 break
 
-        if len(reply) > 4000:
-            reply = reply[:3997] + "…"
-
         # Save a placeholder in history so context flows naturally
         history.append({"role": "user", "content": f"[Screenshot shared] {caption}"})
         history.append({"role": "assistant", "content": [b.model_dump() for b in resp.content]})
@@ -442,11 +447,7 @@ async def handle_photo(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             history = history[-40:]
         state["chat_history"] = history
         _save(state)
-
-        try:
-            await update.message.reply_text(reply, parse_mode="Markdown")
-        except Exception:
-            await update.message.reply_text(reply)
+        await _send_reply(update, reply)
 
     except Exception as e:
         logger.exception("Photo handler failed")
