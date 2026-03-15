@@ -37,6 +37,7 @@ OWNER_CHAT_ID = int(os.environ["TELEGRAM_CHAT_ID"])
 ANTHROPIC_KEY = os.environ["ANTHROPIC_API_KEY"]
 GITHUB_TOKEN  = os.environ["GITHUB_TOKEN"]
 GITHUB_REPO   = os.environ.get("GITHUB_REPO", "ahmedbawla/restaurant-dashboard")
+GROUP_CHAT_ID = int(os.environ.get("TELEGRAM_GROUP_CHAT_ID", 0))
 
 STATE_FILE = Path("/data/agent_state.json")
 
@@ -240,6 +241,16 @@ async def cmd_reject(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not _is_owner(update):
         return
     state = _load()
+
+    # If FINN has a pending recommendation (not yet sent to BART), reject that first
+    if state.get("pending_recommendation"):
+        state["pending_recommendation"] = None
+        _save(state)
+        await _post_to_group(ctx.application, "🗑️ *FINN's recommendation discarded.*")
+        if update.effective_chat.id != GROUP_CHAT_ID:
+            await update.message.reply_text("🗑️ FINN's recommendation discarded.")
+        return
+
     branch = state.get("last_branch")
     if not branch:
         await update.message.reply_text("Nothing to reject.")
@@ -271,13 +282,13 @@ async def cmd_reject(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 
 async def cmd_think(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    """/think [topic] — accounting expert analyzes the dashboard and sets a recommendation as BART's focus."""
+    """/think [topic] — FINN analyzes the dashboard and posts recommendation to the group for approval."""
     if not _is_owner(update):
         return
 
     focus = " ".join(ctx.args) if ctx.args else None
     hint  = f" (focus: {focus})" if focus else ""
-    await update.message.reply_text(f"🧮 Accounting agent analyzing the dashboard{hint}… 1-2 minutes.")
+    await update.message.reply_text(f"🧮 FINN is analyzing the dashboard{hint}… 1-2 minutes.")
 
     try:
         result = await asyncio.get_event_loop().run_in_executor(
@@ -290,21 +301,75 @@ async def cmd_think(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             ),
         )
         state = _load()
-        state["focus"]                = result["recommendation"]
-        state["accounting_analysis"]  = result["full_analysis"]
+        state["pending_recommendation"] = result["recommendation"]
+        state["accounting_analysis"]    = result["full_analysis"]
         _save(state)
 
-        await _send_reply(
-            update,
-            f"🧮 *Accounting Agent*\n\n"
+        msg = (
+            f"🧮 *FINN:*\n\n"
             f"{result['full_analysis']}\n\n"
             f"---\n"
-            f"*Recommendation saved as BART's focus.*\n"
-            f"Run /run to implement · /focus [override] to change it",
+            f"*/approve* — send this to BART to implement\n"
+            f"*/reject* — discard this recommendation"
+        )
+        await _post_to_group(ctx.application, msg)
+
+        # If called from private chat, confirm it was posted
+        if update.effective_chat.id != GROUP_CHAT_ID:
+            await update.message.reply_text("🧮 FINN posted the analysis to the group.")
+
+    except Exception as e:
+        logger.exception("FINN failed")
+        await update.message.reply_text(f"❌ FINN failed:\n{e}")
+
+
+async def cmd_approve(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """/approve — approve FINN's recommendation and hand it to BART to implement."""
+    if not _is_owner(update):
+        return
+
+    state = _load()
+    rec = state.get("pending_recommendation")
+    if not rec:
+        await update.message.reply_text("Nothing pending from FINN. Run /think first.")
+        return
+
+    state["focus"]                  = rec
+    state["pending_recommendation"] = None
+    _save(state)
+
+    await _post_to_group(
+        ctx.application,
+        f"✅ *Approved!*\n\n🤖 *BART:* Got the brief from FINN. Implementing now… (2-5 min)",
+    )
+
+    try:
+        result = await asyncio.get_event_loop().run_in_executor(
+            None,
+            lambda: run_agent(
+                github_token=GITHUB_TOKEN,
+                github_repo=GITHUB_REPO,
+                anthropic_api_key=ANTHROPIC_KEY,
+                focus=rec,
+            ),
+        )
+        state = _load()
+        state["last_branch"]  = result["branch"]
+        state["last_summary"] = result["summary"]
+        state["last_files"]   = result.get("files", [])
+        state["focus"]        = None
+        _save(state)
+
+        await _post_to_group(
+            ctx.application,
+            f"🤖 *BART:* Done!\n\n"
+            f"Branch: `{result['branch']}`\n\n"
+            f"{result['summary']}\n\n"
+            f"*/deploy* to push live · */reject* to discard",
         )
     except Exception as e:
-        logger.exception("Accounting agent failed")
-        await update.message.reply_text(f"❌ Accounting agent failed:\n{e}")
+        logger.exception("BART failed after approval")
+        await _post_to_group(ctx.application, f"❌ *BART:* Implementation failed:\n{e}")
 
 
 async def cmd_rollback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -474,8 +539,9 @@ async def cmd_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
     await update.message.reply_text(
         "🤖 *Dashboard Agent*\n\n"
-        "/think — accounting expert recommends a feature for BART\n"
-        "/think [topic] — same, with a specific accounting area to focus on\n"
+        "/think — FINN analyzes the dashboard and posts a recommendation\n"
+        "/think [topic] — same, focused on a specific area\n"
+        "/approve — approve FINN's recommendation and hand it to BART\n"
         "/do — implement whatever we just discussed in chat\n"
         "/do [hint] — same, with extra direction\n"
         "/run — trigger agent freely (uses /focus if set)\n"
@@ -535,6 +601,28 @@ async def _send_reply(update: Update, text: str):
             await update.message.reply_text(html, parse_mode="HTML")
         except Exception:
             await update.message.reply_text(chunk)
+
+
+async def _post_to_group(app, text: str):
+    """Post a message to the group chat, chunked and HTML-formatted. No-ops if GROUP_CHAT_ID is not set."""
+    if not GROUP_CHAT_ID:
+        return
+    paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
+    chunks, current = [], ""
+    for para in paragraphs:
+        if len(current) + len(para) + 2 > 1000 and current:
+            chunks.append(current.strip())
+            current = para
+        else:
+            current = (current + "\n\n" + para).strip() if current else para
+    if current:
+        chunks.append(current.strip())
+    for chunk in chunks:
+        html = _md_to_html(chunk)
+        try:
+            await app.bot.send_message(GROUP_CHAT_ID, html, parse_mode="HTML")
+        except Exception:
+            await app.bot.send_message(GROUP_CHAT_ID, chunk)
 
 
 def _gh_headers():
@@ -924,6 +1012,7 @@ def main():
 
     for cmd, handler in [
         ("think",     cmd_think),
+        ("approve",   cmd_approve),
         ("run",       cmd_run),
         ("do",        cmd_do),
         ("deploy",    cmd_deploy),
