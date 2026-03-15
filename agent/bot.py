@@ -957,6 +957,11 @@ async def handle_photo(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ Error: {e}")
 
 
+async def cmd_chatid(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Reply with the current chat ID — useful for finding group chat IDs."""
+    await update.message.reply_text(f"Chat ID: `{update.effective_chat.id}`", parse_mode="Markdown")
+
+
 async def cmd_clearchat(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not _is_owner(update):
         return
@@ -1023,6 +1028,7 @@ def main():
         ("status",    cmd_status),
         ("help",      cmd_help),
         ("start",     cmd_help),
+        ("chatid",    cmd_chatid),
         ("clearchat", cmd_clearchat),
     ]:
         app.add_handler(CommandHandler(cmd, handler))
