@@ -426,54 +426,6 @@ def revenue_per_cover_trend(daily_sales: pd.DataFrame) -> go.Figure:
     return fig
 
 
-def menu_engineering_quadrant(menu_items: pd.DataFrame) -> go.Figure:
-    """
-    Menu Engineering Matrix (Boston Matrix):
-    X = popularity (quantity_sold), Y = margin_pct.
-    Quadrants: Stars (high/high), Plowhorses (high pop/low margin),
-               Puzzles (low pop/high margin), Dogs (low/low).
-    """
-    df = menu_items.copy()
-    med_qty = df["quantity_sold"].median()
-    med_margin = df["margin_pct"].median()
-
-    def _quadrant(row):
-        if row["quantity_sold"] >= med_qty and row["margin_pct"] >= med_margin:
-            return "⭐ Stars"
-        elif row["quantity_sold"] >= med_qty:
-            return "🐴 Plowhorses"
-        elif row["margin_pct"] >= med_margin:
-            return "❓ Puzzles"
-        else:
-            return "🐕 Dogs"
-
-    df["quadrant"] = df.apply(_quadrant, axis=1)
-    color_map = {
-        "⭐ Stars":       "#27ae60",
-        "🐴 Plowhorses":  "#f39c12",
-        "❓ Puzzles":     "#3498db",
-        "🐕 Dogs":        "#e74c3c",
-    }
-    fig = px.scatter(
-        df, x="quantity_sold", y="margin_pct",
-        color="quadrant", hover_name="name",
-        color_discrete_map=color_map,
-        size="total_revenue", size_max=40,
-        title="Menu Engineering Matrix",
-        labels={"quantity_sold": "Popularity (Qty Sold)", "margin_pct": "Margin %"},
-    )
-    fig.add_vline(x=med_qty, line_dash="dash",
-                  line_color="rgba(255,255,255,0.2)")
-    fig.add_hline(y=med_margin, line_dash="dash",
-                  line_color="rgba(255,255,255,0.2)")
-    fig.update_layout(
-        yaxis=dict(ticksuffix="%", **_GRID),
-        xaxis=dict(**_GRID),
-        **_LAYOUT,
-    )
-    return fig
-
-
 def labor_pct_by_dept(weekly_payroll: pd.DataFrame, daily_sales: pd.DataFrame) -> go.Figure:
     """Horizontal bar of average labor cost % per department."""
     if weekly_payroll.empty or daily_sales.empty:
