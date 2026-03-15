@@ -244,7 +244,8 @@ def _chat_list_files(directory: str) -> str:
     url = f"https://api.github.com/repos/{GITHUB_REPO}/git/trees/HEAD?recursive=1"
     resp = _requests.get(url, headers=_gh_headers(), timeout=15)
     if resp.status_code != 200:
-        return f"Error fetching file tree: {resp.status_code}"
+        msg = resp.json().get("message", "") if resp.content else ""
+        return f"Error fetching file tree: HTTP {resp.status_code} — {msg}"
     files = [
         item["path"] for item in resp.json().get("tree", [])
         if item["type"] == "blob"
