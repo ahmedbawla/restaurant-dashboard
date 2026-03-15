@@ -859,13 +859,11 @@ def main():
     ]:
         app.add_handler(CommandHandler(cmd, handler))
 
-    # Group messages → discussion; private messages → Q&A chat
-    app.add_handler(MessageHandler(
-        filters.TEXT & ~filters.COMMAND & filters.Chat(GROUP_CHAT_ID) if GROUP_CHAT_ID else filters.NOTHING,
-        handle_group_message,
-    ))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_private_message))
-    app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
+    _group  = filters.ChatType.GROUP | filters.ChatType.SUPERGROUP
+    _private = filters.ChatType.PRIVATE
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & _group,   handle_group_message))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & _private, handle_private_message))
+    app.add_handler(MessageHandler(filters.PHOTO & _private, handle_photo))
 
     logger.info("CHET started, polling…")
     app.run_polling(drop_pending_updates=True)

@@ -1153,7 +1153,8 @@ def main():
     ]:
         app.add_handler(CommandHandler(cmd, handler))
 
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    _any_chat = filters.ChatType.PRIVATE | filters.ChatType.GROUP | filters.ChatType.SUPERGROUP
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & _any_chat, handle_message))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
 
     logger.info("Bot started, polling…")
