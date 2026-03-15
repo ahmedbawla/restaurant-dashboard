@@ -246,9 +246,7 @@ async def cmd_reject(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if state.get("pending_recommendation"):
         state["pending_recommendation"] = None
         _save(state)
-        await _post_to_group(ctx.application, "🗑️ *CHET's recommendation discarded.*")
-        if update.effective_chat.id != GROUP_CHAT_ID:
-            await update.message.reply_text("🗑️ CHET's recommendation discarded.")
+        await update.message.reply_text("🗑️ CHET's recommendation discarded.")
         return
 
     branch = state.get("last_branch")
@@ -281,8 +279,8 @@ async def cmd_reject(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ Could not delete branch:\n{e}\n\nState cleared.")
 
 
-async def cmd_think(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    """/think [topic] — CHET analyzes the dashboard and posts recommendation to the group for approval."""
+async def cmd_chet(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """/chet [topic] — CHET analyzes the dashboard and recommends a feature for BART to implement."""
     if not _is_owner(update):
         return
 
@@ -305,19 +303,14 @@ async def cmd_think(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         state["accounting_analysis"]    = result["full_analysis"]
         _save(state)
 
-        msg = (
+        await _send_reply(
+            update,
             f"🧮 *CHET:*\n\n"
             f"{result['full_analysis']}\n\n"
             f"---\n"
-            f"*/approve* — send this to BART to implement\n"
-            f"*/reject* — discard this recommendation"
+            f"*/approve* — hand this to BART to implement\n"
+            f"*/reject* — discard this recommendation",
         )
-        await _post_to_group(ctx.application, msg)
-
-        # If called from private chat, confirm it was posted
-        if update.effective_chat.id != GROUP_CHAT_ID:
-            await update.message.reply_text("🧮 CHET posted the analysis to the group.")
-
     except Exception as e:
         logger.exception("CHET failed")
         await update.message.reply_text(f"❌ CHET failed:\n{e}")
@@ -331,17 +324,14 @@ async def cmd_approve(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     state = _load()
     rec = state.get("pending_recommendation")
     if not rec:
-        await update.message.reply_text("Nothing pending from CHET. Run /think first.")
+        await update.message.reply_text("Nothing pending from CHET. Run /chet first.")
         return
 
     state["focus"]                  = rec
     state["pending_recommendation"] = None
     _save(state)
 
-    await _post_to_group(
-        ctx.application,
-        f"✅ *Approved!*\n\n🤖 *BART:* Got the brief from CHET. Implementing now… (2-5 min)",
-    )
+    await update.message.reply_text("✅ Approved! 🤖 BART is implementing now… (2-5 min)")
 
     try:
         result = await asyncio.get_event_loop().run_in_executor(
@@ -360,8 +350,8 @@ async def cmd_approve(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         state["focus"]        = None
         _save(state)
 
-        await _post_to_group(
-            ctx.application,
+        await _send_reply(
+            update,
             f"🤖 *BART:* Done!\n\n"
             f"Branch: `{result['branch']}`\n\n"
             f"{result['summary']}\n\n"
@@ -369,7 +359,7 @@ async def cmd_approve(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         )
     except Exception as e:
         logger.exception("BART failed after approval")
-        await _post_to_group(ctx.application, f"❌ *BART:* Implementation failed:\n{e}")
+        await update.message.reply_text(f"❌ BART failed:\n{e}")
 
 
 async def cmd_rollback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -539,8 +529,8 @@ async def cmd_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
     await update.message.reply_text(
         "🤖 *Dashboard Agent*\n\n"
-        "/think — CHET analyzes the dashboard and posts a recommendation\n"
-        "/think [topic] — same, focused on a specific area\n"
+        "/chet — CHET analyzes the dashboard and recommends a feature\n"
+        "/chet [topic] — same, focused on a specific area\n"
         "/approve — approve CHET's recommendation and hand it to BART\n"
         "/do — implement whatever we just discussed in chat\n"
         "/do [hint] — same, with extra direction\n"
@@ -1016,7 +1006,7 @@ def main():
     app = Application.builder().token(BOT_TOKEN).post_init(post_init).build()
 
     for cmd, handler in [
-        ("think",     cmd_think),
+        ("chet",      cmd_chet),
         ("approve",   cmd_approve),
         ("run",       cmd_run),
         ("do",        cmd_do),
