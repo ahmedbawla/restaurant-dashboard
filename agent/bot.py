@@ -269,6 +269,48 @@ async def cmd_reject(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ Could not delete branch:\n{e}\n\nState cleared.")
 
 
+async def cmd_rollback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """/rollback — revert the last commit on main and push."""
+    if not _is_owner(update):
+        return
+
+    repo_url = f"https://x-access-token:{GITHUB_TOKEN}@github.com/{GITHUB_REPO}.git"
+    await update.message.reply_text("⏪ Reverting last commit on main…")
+
+    def _do():
+        with tempfile.TemporaryDirectory() as tmpdir:
+            subprocess.run(["git", "clone", repo_url, tmpdir], check=True, capture_output=True)
+            subprocess.run("git config user.email 'agent@dashboard.bot'", shell=True, cwd=tmpdir)
+            subprocess.run("git config user.name 'Dashboard Agent'", shell=True, cwd=tmpdir)
+            last = subprocess.run(
+                "git log -1 --format='%h %s'",
+                shell=True, cwd=tmpdir, capture_output=True, text=True,
+            ).stdout.strip()
+            revert = subprocess.run(
+                "git revert HEAD --no-edit",
+                shell=True, cwd=tmpdir, capture_output=True, text=True,
+            )
+            if revert.returncode != 0:
+                raise RuntimeError(revert.stderr.strip())
+            push = subprocess.run(
+                "git push origin main",
+                shell=True, cwd=tmpdir, capture_output=True, text=True,
+            )
+            if push.returncode != 0:
+                raise RuntimeError(push.stderr.strip().replace(GITHUB_TOKEN, "***"))
+            return last
+
+    try:
+        last = await asyncio.get_event_loop().run_in_executor(None, _do)
+        await update.message.reply_text(
+            f"✅ Rolled back! Reverted: `{last}`\nStreamlit Cloud is redeploying.",
+            parse_mode="Markdown",
+        )
+    except Exception as e:
+        err = str(e).replace(GITHUB_TOKEN, "***")
+        await update.message.reply_text(f"❌ Rollback failed:\n{err[:500]}")
+
+
 async def cmd_do(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     """/do [optional hint] — extract intent from chat history and run the coding agent."""
     if not _is_owner(update):
@@ -400,6 +442,7 @@ async def cmd_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         "/deploy — deploy branch as-is (test-gated features stay test-only)\n"
         "/promote — remove test gates & deploy to ALL users\n"
         "/reject — delete latest agent branch\n"
+        "/rollback — revert last commit on main\n"
         "/status — show pending branch & last summary\n"
         "/focus [topic] — manually set what agent works on\n"
         "/clearchat — clear conversation history\n"
@@ -411,12 +454,30 @@ async def cmd_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 # ── Developer chat handler ────────────────────────────────────────────────────
 import base64
+import html as _html_lib
+import re as _re_msg
 import requests as _requests
 
 
+def _md_to_html(text: str) -> str:
+    """Convert Claude's markdown output to Telegram HTML."""
+    text = _html_lib.escape(text)
+    # Fenced code blocks (must come before inline code)
+    text = _re_msg.sub(
+        r"```(?:\w*\n)?(.*?)```",
+        lambda m: f"<pre>{m.group(1).rstrip()}</pre>",
+        text,
+        flags=_re_msg.DOTALL,
+    )
+    # Inline code
+    text = _re_msg.sub(r"`([^`\n]+)`", r"<code>\1</code>", text)
+    # Bold
+    text = _re_msg.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", text)
+    return text
+
+
 async def _send_reply(update: Update, text: str):
-    """Split a long reply on blank lines and send as separate Telegram messages."""
-    # Split into paragraphs, group into chunks ≤ 1000 chars
+    """Convert markdown to HTML, split into chunks ≤ 1000 chars, and send."""
     paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
     chunks, current = [], ""
     for para in paragraphs:
@@ -429,12 +490,45 @@ async def _send_reply(update: Update, text: str):
         chunks.append(current.strip())
 
     for chunk in chunks:
+        html = _md_to_html(chunk)
         try:
-            await update.message.reply_text(chunk, parse_mode="Markdown")
+            await update.message.reply_text(html, parse_mode="HTML")
         except Exception:
             await update.message.reply_text(chunk)
 
-_DEV_SYSTEM = f"""You are a senior full-stack developer and co-owner of a Streamlit restaurant analytics dashboard (repo: {GITHUB_REPO}).
+
+def _gh_headers():
+    return {"Authorization": f"token {GITHUB_TOKEN}", "Accept": "application/vnd.github.v3+json"}
+
+
+def _fetch_recent_commits() -> str:
+    try:
+        url = f"https://api.github.com/repos/{GITHUB_REPO}/commits?per_page=10"
+        resp = _requests.get(url, headers=_gh_headers(), timeout=10)
+        if resp.status_code != 200:
+            return "unavailable"
+        return "\n".join(
+            f"{c['sha'][:7]} {c['commit']['message'].splitlines()[0]}"
+            for c in resp.json()[:10]
+        )
+    except Exception:
+        return "unavailable"
+
+
+def _build_dev_system(state: dict) -> str:
+    """Build a dynamic system prompt that includes current agent state."""
+    pending      = state.get("last_branch")  or "none"
+    last_summary = state.get("last_summary") or "No agent run yet."
+    focus        = state.get("focus")        or "none"
+
+    recent_commits = _fetch_recent_commits()
+
+    notes = _chat_read_file("AGENT_NOTES.md")
+    if notes.startswith("Error"):
+        notes = "No notes yet."
+    notes = notes[:2000]
+
+    return f"""You are a senior full-stack developer and co-owner of a Streamlit restaurant analytics dashboard (repo: {GITHUB_REPO}).
 
 READ THE ACTUAL CODE using your tools before answering — never guess.
 You have read-only access via the GitHub API.
@@ -442,13 +536,25 @@ You have read-only access via the GitHub API.
 Stack: Python, Streamlit, SQLAlchemy, Supabase/PostgreSQL, Plotly, Pandas.
 Pages: Summary, Spending (QuickBooks), Payroll (Paychex), Inventory, Sales, Reports, Account.
 
+## Current agent state
+Pending branch: {pending}
+Last agent summary: {last_summary}
+Current focus: {focus}
+
+## Recent git history (last 10 commits)
+{recent_commits}
+
+## Agent notes (AGENT_NOTES.md)
+{notes}
+
 ## Response style — CRITICAL
 - Be concise. Max 3-4 short paragraphs or a tight bullet list.
 - Use plain language, not formal documentation.
 - Break your answer into short sections separated by blank lines — NOT one long block.
 - If listing improvements, use numbered bullets: 1. 2. 3. — one idea per line.
 - Never pad with intros like "Great question!" or summaries restating what you just said.
-- If asked to make a change, say the file + line + exactly what to edit, then suggest /focus + /run."""
+- If asked to make a change, say the file + line + exactly what to edit, then suggest /do or /run."""
+
 
 _CHAT_TOOLS = [
     {
@@ -486,8 +592,6 @@ _CHAT_TOOLS = [
     },
 ]
 
-def _gh_headers():
-    return {"Authorization": f"token {GITHUB_TOKEN}", "Accept": "application/vnd.github.v3+json"}
 
 def _chat_read_file(path: str) -> str:
     url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{path}"
@@ -502,6 +606,7 @@ def _chat_read_file(path: str) -> str:
         return base64.b64decode(content).decode("utf-8", errors="replace")
     return content
 
+
 def _chat_list_files(directory: str) -> str:
     url = f"https://api.github.com/repos/{GITHUB_REPO}/git/trees/HEAD?recursive=1"
     resp = _requests.get(url, headers=_gh_headers(), timeout=15)
@@ -514,9 +619,12 @@ def _chat_list_files(directory: str) -> str:
     ]
     return "\n".join(files[:200])
 
+
 def _chat_search(pattern: str) -> str:
     url = f"https://api.github.com/search/code?q={_requests.utils.quote(pattern)}+repo:{GITHUB_REPO}"
-    resp = _requests.get(url, headers=_gh_headers(), timeout=15)
+    # text-match header required to get code fragments in results
+    headers = {**_gh_headers(), "Accept": "application/vnd.github.text-match+json"}
+    resp = _requests.get(url, headers=headers, timeout=15)
     if resp.status_code != 200:
         return f"Search error {resp.status_code}"
     items = resp.json().get("items", [])
@@ -528,11 +636,60 @@ def _chat_search(pattern: str) -> str:
         lines.append(f"**{item['path']}**\n" + "\n".join(f"  …{f.strip()}…" for f in frags[:2]))
     return "\n\n".join(lines)
 
+
 def _chat_execute_tool(name: str, inputs: dict) -> str:
     if name == "read_file":   return _chat_read_file(inputs["path"])
     if name == "list_files":  return _chat_list_files(inputs.get("directory", ""))
     if name == "search_code": return _chat_search(inputs["pattern"])
     return f"Unknown tool: {name}"
+
+
+async def _trim_history(client, history: list) -> list:
+    """Summarize the oldest messages when history gets long, preserving recent context."""
+    if len(history) <= 30:
+        return history
+
+    to_summarize = history[:-20]
+    keep = history[-20:]
+
+    # Extract text-only content for summarization
+    text_parts = []
+    for msg in to_summarize:
+        role = msg["role"].upper()
+        content = msg["content"]
+        if isinstance(content, str):
+            text_parts.append(f"{role}: {content}")
+        elif isinstance(content, list):
+            texts = [
+                b["text"] for b in content
+                if isinstance(b, dict) and b.get("type") == "text" and b.get("text", "").strip()
+            ]
+            if texts:
+                text_parts.append(f"{role}: " + " ".join(texts))
+
+    if not text_parts:
+        return keep
+
+    try:
+        summary_resp = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=400,
+            system=(
+                "Summarize this developer conversation in 3-5 bullet points. "
+                "Focus on decisions made, features discussed, and key context. "
+                "Plain text only."
+            ),
+            messages=[{"role": "user", "content": "\n\n".join(text_parts)}],
+        )
+        summary_text = summary_resp.content[0].text.strip()
+        condensed = [
+            {"role": "user", "content": f"[Earlier conversation summary]\n{summary_text}"},
+            {"role": "assistant", "content": [{"type": "text", "text": "Got it, continuing with that context."}]},
+        ]
+        return condensed + keep
+    except Exception:
+        return keep  # fall back to simple truncation if summarization fails
+
 
 async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not _is_owner(update):
@@ -543,14 +700,16 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     state   = _load()
     history = state.get("chat_history", [])
     history.append({"role": "user", "content": update.message.text})
-    if len(history) > 40:
-        history = history[-40:]
 
     await ctx.bot.send_chat_action(update.effective_chat.id, "typing")
 
     try:
         client = _anthropic.Anthropic(api_key=ANTHROPIC_KEY)
-        resp   = None
+
+        # Summarize old messages instead of hard-truncating
+        history = await _trim_history(client, history)
+
+        resp = None
 
         def _serialize(block) -> dict:
             if block.type == "text":
@@ -559,11 +718,11 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 return {"type": "tool_use", "id": block.id, "name": block.name, "input": block.input}
             return {"type": block.type}
 
-        for _ in range(15):
+        for _ in range(25):
             resp = client.messages.create(
                 model="claude-sonnet-4-6",
                 max_tokens=2048,
-                system=_DEV_SYSTEM,
+                system=_build_dev_system(state),
                 tools=_CHAT_TOOLS,
                 messages=history,
             )
@@ -647,7 +806,7 @@ async def handle_photo(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         resp = client.messages.create(
             model="claude-sonnet-4-6",
             max_tokens=2048,
-            system=_DEV_SYSTEM,
+            system=_build_dev_system(state),
             tools=_CHAT_TOOLS,
             messages=vision_messages,
         )
@@ -658,11 +817,9 @@ async def handle_photo(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 reply = block.text.strip()
                 break
 
-        # Save a placeholder in history so context flows naturally
+        # Save a text-only placeholder so vision content (too large) stays out of history
         history.append({"role": "user", "content": f"[Screenshot shared] {caption}"})
-        history.append({"role": "assistant", "content": [b.model_dump() for b in resp.content]})
-        if len(history) > 40:
-            history = history[-40:]
+        history.append({"role": "assistant", "content": [{"type": "text", "text": reply}]})
         state["chat_history"] = history
         _save(state)
         await _send_reply(update, reply)
@@ -731,6 +888,7 @@ def main():
         ("deploy",    cmd_deploy),
         ("promote",   cmd_promote),
         ("reject",    cmd_reject),
+        ("rollback",  cmd_rollback),
         ("focus",     cmd_focus),
         ("status",    cmd_status),
         ("help",      cmd_help),
