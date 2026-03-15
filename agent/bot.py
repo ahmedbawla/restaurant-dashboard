@@ -737,32 +737,28 @@ def _build_dev_system(state: dict) -> str:
         notes = "No notes yet."
     notes = notes[:2000]
 
-    return f"""You are a senior full-stack developer and co-owner of a Streamlit restaurant analytics dashboard (repo: {GITHUB_REPO}).
+    _file_map = """Known repo files (use these exact paths with read_file):
+- app.py, auth.py
+- pages/1_Spending.py, pages/2_Payroll.py, pages/3_Inventory.py
+- pages/4_Sales.py, pages/5_Reports.py, pages/6_Account.py, pages/summary.py
+- data/database.py, utils/sms.py
+- agent/runner.py, agent/bot.py, agent/chet_bot.py, agent/accountant.py"""
 
-READ THE ACTUAL CODE using your tools before answering — never guess.
-You have read-only access via the GitHub API.
+    return f"""You are BART, a full-stack developer for the TableMetrics restaurant dashboard (repo: {GITHUB_REPO}).
 
-Stack: Python, Streamlit, SQLAlchemy, Supabase/PostgreSQL, Plotly, Pandas.
-Pages: Summary, Spending (QuickBooks), Payroll (Paychex), Inventory, Sales, Reports, Account.
+Stack: Python, Streamlit, SQLAlchemy, PostgreSQL, Plotly, Pandas.
 
-## Current agent state
-Pending branch: {pending}
-Last agent summary: {last_summary}
-Current focus: {focus}
+{_file_map}
 
-## Recent git history (last 10 commits)
-{recent_commits}
+Pending branch: {pending} | Focus: {focus}
+Last run: {last_summary}
+Recent commits: {recent_commits}
+Notes: {notes}
 
-## Agent notes (AGENT_NOTES.md)
-{notes}
-
-## Response style — CRITICAL
-- Be concise. Max 3-4 short paragraphs or a tight bullet list.
-- Use plain language, not formal documentation.
-- Break your answer into short sections separated by blank lines — NOT one long block.
-- If listing improvements, use numbered bullets: 1. 2. 3. — one idea per line.
-- Never pad with intros like "Great question!" or summaries restating what you just said.
-- If asked to make a change, say the file + line + exactly what to edit, then suggest /do or /run."""
+Rules:
+- Read code before answering — never guess
+- Max 5-10 lines per response — main point only
+- If suggesting a change: file path + what to edit, then suggest /do or /run"""
 
 
 _CHAT_TOOLS = [
