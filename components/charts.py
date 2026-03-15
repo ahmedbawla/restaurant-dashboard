@@ -8,7 +8,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 
 
-_BRAND_COLOR = "#D4A84B"        # warm gold
+_BRAND_COLOR = "#FF6B35"        # vibrant orange — unified theme accent
 _PALETTE = px.colors.qualitative.Set2
 
 # Shared layout defaults for a clean dark look
@@ -38,7 +38,7 @@ def revenue_trend(df: pd.DataFrame, days: int = 30) -> go.Figure:
         name="Daily Revenue",
         fill="tozeroy",
         line=dict(color=_BRAND_COLOR, width=2),
-        fillcolor="rgba(212,168,75,0.10)",
+        fillcolor="rgba(255,107,53,0.10)",
     ))
     fig.add_trace(go.Scatter(
         x=data["date"], y=data["rolling_7"],
@@ -290,7 +290,7 @@ def hourly_heatmap(hourly_sales: pd.DataFrame) -> go.Figure:
         z=pivot.values,
         x=[f"{h}:00" for h in pivot.columns],
         y=pivot.index.tolist(),
-        colorscale=[[0, "#13151f"], [0.5, "#d4a84b"], [1, "#e74c3c"]],
+        colorscale=[[0, "#13151f"], [0.5, "#FF6B35"], [1, "#e74c3c"]],
         colorbar=dict(title="Avg Covers", tickfont=dict(color="rgba(240,242,246,0.6)")),
     ))
     fig.update_layout(
@@ -333,7 +333,7 @@ def avg_check_trend(daily_sales: pd.DataFrame) -> go.Figure:
     fig.add_trace(go.Scatter(
         x=ds["date"], y=ds["avg_check"],
         name="Avg Check", line=dict(color=_BRAND_COLOR, width=2),
-        fill="tozeroy", fillcolor="rgba(212,168,75,0.07)",
+        fill="tozeroy", fillcolor="rgba(255,107,53,0.07)",
     ))
     fig.add_trace(go.Scatter(
         x=ds["date"], y=ds["rolling_7"],
@@ -384,7 +384,7 @@ def revenue_by_dow(daily_sales: pd.DataFrame) -> go.Figure:
     df["day"] = df["date"].dt.day_name()
     df["day_num"] = df["date"].dt.dayofweek
     day_sum = df.groupby(["day", "day_num"])["revenue"].sum().reset_index().sort_values("day_num")
-    colors = [_BRAND_COLOR if v == day_sum["revenue"].max() else "rgba(212,168,75,0.4)"
+    colors = [_BRAND_COLOR if v == day_sum["revenue"].max() else "rgba(255,107,53,0.4)"
               for v in day_sum["revenue"]]
     fig = go.Figure(go.Bar(
         x=day_sum["day"], y=day_sum["revenue"],
