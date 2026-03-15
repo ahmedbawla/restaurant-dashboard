@@ -125,10 +125,15 @@ with st.expander("Update Paychex Data", expanded=False):
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 with st.sidebar:
     st.header("Filters")
-    available_weeks = sorted(weekly_payroll["week_start"].unique(), reverse=True)
-    selected_week   = st.selectbox("Payroll Week", available_weeks)
+    available_paydates = sorted(weekly_payroll["pay_date"].unique(), reverse=True)
+    selected_paydate   = st.selectbox(
+        "Check Date",
+        available_paydates,
+        format_func=lambda d: pd.to_datetime(d).strftime("%b %d, %Y"),
+    )
 
-week_data = weekly_payroll[weekly_payroll["week_start"] == selected_week]
+_check_label_short = pd.to_datetime(selected_paydate).strftime("%b %d, %Y")
+week_data = weekly_payroll[weekly_payroll["pay_date"] == selected_paydate]
 
 # ── Period-level metrics ──────────────────────────────────────────────────────
 period_payroll = weekly_payroll["gross_pay"].sum()
@@ -161,47 +166,60 @@ st.divider()
 # ── Paychex Payroll Journal Summary ──────────────────────────────────────────
 _pjs = db.get_payroll_summary(username)
 if _pjs:
-    _fmt_date = lambda d: pd.to_datetime(d, format="%m/%d/%y").strftime("%b %d, %Y") if d else "—"
-    _period_label = f"{_fmt_date(_pjs.get('period_start'))} – {_fmt_date(_pjs.get('period_end'))}"
-    _check_label  = f"{_fmt_date(_pjs.get('check_date_start'))} – {_fmt_date(_pjs.get('check_date_end'))}"
+    _fmt_date  = lambda d: pd.to_datetime(d, format="%m/%d/%y").strftime("%b %d, %Y") if d else "—"
+    _full_gross = float(_pjs.get("gross_earnings") or 0)
+    # Scale all summary values to the selected period via gross-pay ratio
+    _ratio      = (period_payroll / _full_gross) if _full_gross > 0 else 0
+    _is_full    = abs(_ratio - 1.0) < 0.01
+    def _sc(key):
+        return float(_pjs.get(key) or 0) * _ratio
+
+    _period_note = (
+        "Full report period"
+        if _is_full
+        else f"Estimated for selected period ({_ratio*100:.0f}% of full report)"
+    )
 
     section_header(
         "Payroll Journal Report",
         help=(
-            "Totals extracted directly from the uploaded Paychex Payroll Journal PDF. "
-            "These figures cover the full report period regardless of the date filter above."
+            "Withholding and liability figures are prorated from the full Paychex PDF "
+            "using the ratio of selected-period gross wages to total report gross wages."
         ),
     )
-    st.caption(f"Work period: **{_period_label}**  ·  Check dates: **{_check_label}**")
+    st.caption(
+        f"Report covers: **{_fmt_date(_pjs.get('period_start'))} – {_fmt_date(_pjs.get('period_end'))}**"
+        f"  ·  {_period_note}"
+    )
 
+    _sc_net = period_payroll - _sc("total_ee_withholdings")
     j1, j2, j3, j4, j5 = st.columns(5)
     with j1:
-        st.metric("Employees", f"{_pjs.get('headcount', 0)}")
+        st.metric("Employees", f"{headcount}")
     with j2:
-        st.metric("Transactions", f"{_pjs.get('transactions', 0)}")
+        st.metric("Transactions", f"{len(weekly_payroll)}")
     with j3:
-        st.metric("Total Hours", f"{_pjs.get('total_hours', 0):,.1f}")
+        st.metric("Total Hours", f"{period_hours:,.1f}")
     with j4:
-        st.metric("Gross Earnings", format_currency(_pjs.get("gross_earnings", 0)))
+        st.metric("Gross Earnings", format_currency(period_payroll))
     with j5:
-        st.metric("Net Pay", format_currency(_pjs.get("net_pay", 0)),
-                  help=f"Check: {format_currency(_pjs.get('check_amt', 0))}  ·  "
-                       f"Direct Deposit: {format_currency(_pjs.get('direct_deposit_amt', 0))}")
+        st.metric("Est. Net Pay", format_currency(_sc_net),
+                  help="Gross earnings minus estimated employee withholdings for the period.")
 
     _wh_col, _er_col = st.columns(2)
     with _wh_col:
         st.caption("**Employee Withholdings**")
         _wh_rows = [
-            ("Social Security",  _pjs.get("ee_social_security",  0)),
-            ("Medicare",         _pjs.get("ee_medicare",         0)),
-            ("Fed Income Tax",   _pjs.get("ee_fed_income_tax",   0)),
-            ("State Income Tax", _pjs.get("ee_state_income_tax", 0)),
-            ("State Disability", _pjs.get("ee_state_disability", 0)),
-            ("State PFL",        _pjs.get("ee_state_pfl",        0)),
+            ("Social Security",  _sc("ee_social_security")),
+            ("Medicare",         _sc("ee_medicare")),
+            ("Fed Income Tax",   _sc("ee_fed_income_tax")),
+            ("State Income Tax", _sc("ee_state_income_tax")),
+            ("State Disability", _sc("ee_state_disability")),
+            ("State PFL",        _sc("ee_state_pfl")),
         ]
-        if _pjs.get("ee_other", 0):
-            _wh_rows.append(("Other", _pjs["ee_other"]))
-        _wh_rows.append(("**Total Withheld**", _pjs.get("total_ee_withholdings", 0)))
+        if _sc("ee_other"):
+            _wh_rows.append(("Other", _sc("ee_other")))
+        _wh_rows.append(("**Total Withheld**", _sc("total_ee_withholdings")))
         _wh_df = pd.DataFrame(_wh_rows, columns=["Withholding", "Amount"])
         _wh_df["Amount"] = _wh_df["Amount"].apply(lambda x: f"${x:,.2f}")
         st.dataframe(_wh_df, use_container_width=True, hide_index=True)
@@ -209,18 +227,18 @@ if _pjs:
     with _er_col:
         st.caption("**Employer Liabilities**")
         _er_rows = [
-            ("Social Security",    _pjs.get("er_social_security",    0)),
-            ("Medicare",           _pjs.get("er_medicare",           0)),
-            ("Fed Unemployment",   _pjs.get("er_fed_unemployment",   0)),
-            ("State Unemployment", _pjs.get("er_state_unemployment", 0)),
+            ("Social Security",    _sc("er_social_security")),
+            ("Medicare",           _sc("er_medicare")),
+            ("Fed Unemployment",   _sc("er_fed_unemployment")),
+            ("State Unemployment", _sc("er_state_unemployment")),
         ]
-        if _pjs.get("er_other", 0):
-            _er_rows.append(("Other", _pjs["er_other"]))
-        _er_rows.append(("**Total ER Liability**", _pjs.get("total_er_liability", 0)))
+        if _sc("er_other"):
+            _er_rows.append(("Other", _sc("er_other")))
+        _er_rows.append(("**Total ER Liability**", _sc("total_er_liability")))
         _er_df = pd.DataFrame(_er_rows, columns=["Liability", "Amount"])
         _er_df["Amount"] = _er_df["Amount"].apply(lambda x: f"${x:,.2f}")
         st.dataframe(_er_df, use_container_width=True, hide_index=True)
-        st.caption(f"Total Tax Liability (EE + ER): **{format_currency(_pjs.get('total_tax_liability', 0))}**")
+        st.caption(f"Est. Total Tax Liability (EE + ER): **{format_currency(_sc('total_tax_liability'))}**")
 
     st.divider()
 
@@ -323,10 +341,10 @@ if not _qb_payroll.empty:
 # ── Weekly payroll trend ──────────────────────────────────────────────────────
 section_header("Weekly Payroll Trend", help="Total gross pay per pay period across the selected range.")
 weekly_totals = (
-    weekly_payroll.groupby("week_start")["gross_pay"]
-    .sum().reset_index().sort_values("week_start")
+    weekly_payroll.groupby("pay_date")["gross_pay"]
+    .sum().reset_index().sort_values("pay_date")
 )
-weekly_totals["week_label"] = pd.to_datetime(weekly_totals["week_start"]).dt.strftime("%b %d")
+weekly_totals["week_label"] = pd.to_datetime(weekly_totals["pay_date"]).dt.strftime("%b %d")
 weekly_totals["rolling_4"]  = weekly_totals["gross_pay"].rolling(4, min_periods=1).mean()
 
 fig_trend = go.Figure()
@@ -352,8 +370,8 @@ st.divider()
 
 # ── Selected week breakdown ───────────────────────────────────────────────────
 section_header(
-    f"Week of {selected_week} — Breakdown",
-    help="Pay and hours breakdown for the selected payroll week.",
+    f"Check Date {_check_label_short} — Breakdown",
+    help="Pay and hours breakdown for the selected check date.",
 )
 wk1, wk2, wk3 = st.columns(3)
 with wk1:
@@ -411,10 +429,10 @@ st.divider()
 # ── Pay by role ───────────────────────────────────────────────────────────────
 section_header(
     "Pay & Hours by Role",
-    help="Total gross pay and hours grouped by job role for the selected week.",
+    help="Total gross pay and hours grouped by job role for the selected period.",
 )
 role_data = (
-    week_data.groupby("role")
+    weekly_payroll.groupby("role")
     .agg(gross_pay=("gross_pay", "sum"), total_hours=("total_hours", "sum"))
     .reset_index().sort_values("gross_pay", ascending=False)
 )
@@ -443,11 +461,16 @@ st.divider()
 
 # ── Payroll detail ────────────────────────────────────────────────────────────
 section_header(
-    f"Payroll Detail — Week of {selected_week}",
-    help="Full payroll breakdown per employee for the selected week.",
+    "Payroll Detail — Selected Period",
+    help="Payroll totals per employee aggregated across the selected date range.",
 )
-pd_ = week_data[["employee_name", "dept", "role", "employment_type",
-                  "regular_hours", "total_hours", "gross_pay"]].copy()
+pd_ = (
+    weekly_payroll.groupby(["employee_name", "dept", "role", "employment_type"])
+    .agg(regular_hours=("regular_hours", "sum"),
+         total_hours=("total_hours", "sum"),
+         gross_pay=("gross_pay", "sum"))
+    .reset_index()
+)
 pd_["gross_pay"]     = pd_["gross_pay"].apply(lambda x: f"${x:,.2f}")
 pd_["regular_hours"] = pd_["regular_hours"].apply(lambda x: f"{x:.1f}")
 pd_["total_hours"]   = pd_["total_hours"].apply(lambda x: f"{x:.1f}")
