@@ -384,16 +384,24 @@ with wk3:
 # Top earners & hours side by side
 c1, c2 = st.columns(2)
 
-top_earn = week_data.nlargest(15, "gross_pay")[["employee_name", "gross_pay", "role"]].copy()
+top_earn = week_data.nlargest(15, "gross_pay")[["employee_name", "gross_pay", "role", "total_hours"]].copy()
 top_earn = top_earn.sort_values("gross_pay")
+top_earn["_hourly"] = (top_earn["gross_pay"] / top_earn["total_hours"].replace(0, float("nan"))).round(2)
 fig_earn = go.Figure(go.Bar(
     x=top_earn["gross_pay"], y=top_earn["employee_name"],
     orientation="h",
     marker_color=_BRAND, marker_line_width=0,
     text=top_earn["gross_pay"].apply(lambda x: f"${x:,.0f}"),
     textposition="outside", textfont=dict(size=10),
-    customdata=top_earn["role"],
-    hovertemplate="%{y}<br>%{customdata}<br>$%{x:,.2f}<extra></extra>",
+    customdata=top_earn[["role", "total_hours", "_hourly"]].values,
+    hovertemplate=(
+        "%{y}<br>"
+        "Role: %{customdata[0]}<br>"
+        "Gross Pay: $%{x:,.2f}<br>"
+        "Hours: %{customdata[1]:.1f}<br>"
+        "Avg Hourly: $%{customdata[2]:.2f}"
+        "<extra></extra>"
+    ),
 ))
 fig_earn.update_layout(
     title="Top Earners — Gross Pay",
