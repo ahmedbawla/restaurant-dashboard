@@ -20,7 +20,7 @@ from pathlib import Path
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from telegram import Update
-from telegram.ext import Application, CommandHandler, ContextTypes
+from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
 
 from runner import run_agent
 
@@ -201,6 +201,60 @@ async def cmd_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     )
 
 
+# ── Chat handler ─────────────────────────────────────────────────────────────
+_CHAT_SYSTEM = """You are an AI assistant for a restaurant owner who uses the TableMetrics dashboard.
+The dashboard has these sections: Sales & Revenue, Payroll (Paychex), Spending & Expenses (QuickBooks), Inventory, and Reports.
+
+Help the owner:
+- Understand their restaurant metrics and what they mean
+- Make business decisions (staffing, pricing, cost control)
+- Interpret numbers they paste or describe to you
+- Answer general restaurant management questions
+
+Be concise and practical. You don't have live access to their database, but they can paste numbers and you'll analyze them.
+If they ask you to make a code change or improvement, tell them to use /focus followed by /run instead."""
+
+async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not _is_owner(update):
+        return
+
+    state = _load()
+    history = state.get("chat_history", [])
+    user_text = update.message.text
+
+    await ctx.bot.send_chat_action(update.effective_chat.id, "typing")
+
+    history.append({"role": "user", "content": user_text})
+    # Keep last 30 messages to stay within token limits
+    if len(history) > 30:
+        history = history[-30:]
+
+    import anthropic as _anthropic
+    client = _anthropic.Anthropic(api_key=ANTHROPIC_KEY)
+    resp = client.messages.create(
+        model="claude-sonnet-4-5",
+        max_tokens=1024,
+        system=_CHAT_SYSTEM,
+        messages=history,
+    )
+    reply = resp.content[0].text
+
+    history.append({"role": "assistant", "content": reply})
+    state["chat_history"] = history
+    _save(state)
+
+    await update.message.reply_text(reply)
+
+
+async def cmd_clearchat(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not _is_owner(update):
+        return
+    state = _load()
+    state["chat_history"] = []
+    _save(state)
+    await update.message.reply_text("💬 Conversation cleared.")
+
+
 # ── Nightly run ───────────────────────────────────────────────────────────────
 async def nightly_run(app: Application):
     state = _load()
@@ -251,9 +305,12 @@ def main():
         ("focus",  cmd_focus),
         ("status", cmd_status),
         ("help",   cmd_help),
-        ("start",  cmd_help),
+        ("start",    cmd_help),
+        ("clearchat", cmd_clearchat),
     ]:
         app.add_handler(CommandHandler(cmd, handler))
+
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
     logger.info("Bot started, polling…")
     app.run_polling(drop_pending_updates=True)
