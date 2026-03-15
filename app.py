@@ -365,7 +365,7 @@ with st.sidebar:
         getattr(st, _msg["type"])(_msg["text"])
 
 # ── Navigation ────────────────────────────────────────────────────────────────
-pg = st.navigation([
+_pages = [
     st.Page("pages/summary.py",      title="Summary",          icon="🏠"),
     st.Page("pages/1_Spending.py",   title="Spending",         icon="💳"),
     st.Page("pages/2_Payroll.py",    title="Payroll",          icon="👥"),
@@ -373,5 +373,8 @@ pg = st.navigation([
     st.Page("pages/4_Sales.py",      title="Sales",            icon="📈"),
     st.Page("pages/5_Reports.py",    title="Reports",          icon="📄"),
     st.Page("pages/6_Account.py",    title="Account Settings", icon="⚙️"),
-])
+]
+if username == "test":
+    _pages.append(st.Page("pages/7_Chat.py", title="AI Assistant", icon="🤖"))
+pg = st.navigation(_pages)
 pg.run()
