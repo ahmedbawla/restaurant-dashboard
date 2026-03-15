@@ -82,6 +82,201 @@ with k5:
 
 st.divider()
 
+# ── Menu Engineering Matrix (test account only) ───────────────────────────────
+if username == "test":
+    section_header(
+        "Menu Engineering Matrix",
+        help=(
+            "Classifies every menu item into one of four quadrants based on "
+            "**popularity** (qty sold vs average) and **profitability** (margin % vs average). "
+            "**Stars** → high popularity + high margin: promote and protect. "
+            "**Plowhorses** → high popularity + low margin: reprice or reduce cost. "
+            "**Puzzles** → low popularity + high margin: improve visibility or placement. "
+            "**Dogs** → low popularity + low margin: consider removing from menu."
+        ),
+    )
+
+    _me = menu_items.copy()
+
+    # Require at least margin_pct and quantity_sold columns
+    if "margin_pct" in _me.columns and "quantity_sold" in _me.columns:
+        # Use median as the cut-off (more robust than mean for skewed menus)
+        _qty_median    = _me["quantity_sold"].median()
+        _margin_median = _me["margin_pct"].median()
+
+        def _classify(row):
+            high_pop    = row["quantity_sold"] >= _qty_median
+            high_margin = row["margin_pct"]    >= _margin_median
+            if high_pop and high_margin:
+                return "⭐ Star"
+            elif high_pop and not high_margin:
+                return "🐎 Plowhorse"
+            elif not high_pop and high_margin:
+                return "🧩 Puzzle"
+            else:
+                return "🐶 Dog"
+
+        _me["quadrant"] = _me.apply(_classify, axis=1)
+
+        _QUAD_COLORS = {
+            "⭐ Star":       "#2ecc71",   # green
+            "🐎 Plowhorse":  "#D4A84B",   # gold
+            "🧩 Puzzle":     "#5b9bd5",   # blue
+            "🐶 Dog":        "#e74c3c",   # red
+        }
+        _QUAD_COLOR_LIST = [_QUAD_COLORS.get(q, "#888") for q in _me["quadrant"]]
+
+        # Summary counts
+        _quad_counts = _me["quadrant"].value_counts()
+        qc1, qc2, qc3, qc4 = st.columns(4)
+        for _col, _label in zip(
+            [qc1, qc2, qc3, qc4],
+            ["⭐ Star", "🐎 Plowhorse", "🧩 Puzzle", "🐶 Dog"],
+        ):
+            _count    = int(_quad_counts.get(_label, 0))
+            _quad_rev = _me[_me["quadrant"] == _label]["total_revenue"].sum()
+            _col.metric(
+                _label,
+                f"{_count} items",
+                delta=format_currency(_quad_rev),
+                delta_color="off",
+            )
+
+        # Scatter plot: qty sold vs margin %
+        _LAYOUT_ME = dict(
+            plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+            font=dict(color="rgba(240,242,246,0.75)", size=11),
+            title_font=dict(size=13, color="rgba(240,242,246,0.6)"),
+            margin=dict(l=0, r=0, t=48, b=0),
+            legend=dict(bgcolor="rgba(0,0,0,0)",
+                        bordercolor="rgba(255,255,255,0.1)", borderwidth=1),
+        )
+        _GRID_ME = dict(gridcolor="rgba(255,255,255,0.06)",
+                        zerolinecolor="rgba(255,255,255,0.1)")
+
+        fig_me = go.Figure()
+        for _q, _color in _QUAD_COLORS.items():
+            _subset = _me[_me["quadrant"] == _q]
+            if _subset.empty:
+                continue
+            fig_me.add_trace(go.Scatter(
+                x=_subset["quantity_sold"],
+                y=_subset["margin_pct"],
+                mode="markers",
+                name=_q,
+                marker=dict(
+                    color=_color,
+                    size=_subset["total_revenue"].apply(
+                        lambda v: max(8, min(30, v / (_me["total_revenue"].max() or 1) * 30))
+                    ),
+                    opacity=0.82,
+                    line=dict(width=0.5, color="rgba(0,0,0,0.3)"),
+                ),
+                text=_subset["name"],
+                customdata=_subset[["category", "price", "total_revenue"]].values,
+                hovertemplate=(
+                    "<b>%{text}</b><br>"
+                    "Category: %{customdata[0]}<br>"
+                    "Price: $%{customdata[1]:.2f}<br>"
+                    "Qty Sold: %{x:,}<br>"
+                    "Margin: %{y:.1f}%<br>"
+                    "Revenue: $%{customdata[2]:,.0f}"
+                    "<extra></extra>"
+                ),
+            ))
+
+        # Crosshair lines at medians
+        fig_me.add_vline(x=_qty_median, line_dash="dash",
+                         line_color="rgba(255,255,255,0.25)",
+                         annotation_text=f"Median qty: {_qty_median:,.0f}",
+                         annotation_font_color="rgba(240,242,246,0.5)")
+        fig_me.add_hline(y=_margin_median, line_dash="dash",
+                         line_color="rgba(255,255,255,0.25)",
+                         annotation_text=f"Median margin: {_margin_median:.1f}%",
+                         annotation_font_color="rgba(240,242,246,0.5)")
+
+        fig_me.update_layout(
+            title="Popularity vs Profitability  (bubble size = total revenue)",
+            xaxis=dict(title="Quantity Sold", **_GRID_ME),
+            yaxis=dict(title="Margin %", ticksuffix="%", **_GRID_ME),
+            **_LAYOUT_ME,
+        )
+        st.plotly_chart(fig_me, use_container_width=True)
+
+        # Actionable insight callout
+        _stars      = _me[_me["quadrant"] == "⭐ Star"]
+        _dogs       = _me[_me["quadrant"] == "🐶 Dog"]
+        _plowhorses = _me[_me["quadrant"] == "🐎 Plowhorse"]
+        _puzzles    = _me[_me["quadrant"] == "🧩 Puzzle"]
+
+        _insight_rows = []
+        if not _stars.empty:
+            _top_star = _stars.loc[_stars["total_revenue"].idxmax(), "name"]
+            _insight_rows.append(
+                ("⭐", f"<strong>{len(_stars)} Star item{'s' if len(_stars) != 1 else ''}</strong> — "
+                 f"protect these on the menu. Top star: <strong>{_top_star}</strong> "
+                 f"({format_currency(_stars['total_revenue'].max())} revenue).")
+            )
+        if not _plowhorses.empty:
+            _top_ph = _plowhorses.loc[_plowhorses["quantity_sold"].idxmax(), "name"]
+            _insight_rows.append(
+                ("🐎", f"<strong>{len(_plowhorses)} Plowhorse item{'s' if len(_plowhorses) != 1 else ''}</strong> — "
+                 f"popular but low margin. Consider raising the price of "
+                 f"<strong>{_top_ph}</strong> (your highest-volume plowhorse) by $0.50–$1 "
+                 f"or reducing its ingredient cost.")
+            )
+        if not _puzzles.empty:
+            _top_pz = _puzzles.loc[_puzzles["margin_pct"].idxmax(), "name"]
+            _insight_rows.append(
+                ("🧩", f"<strong>{len(_puzzles)} Puzzle item{'s' if len(_puzzles) != 1 else ''}</strong> — "
+                 f"high margin but low volume. Move <strong>{_top_pz}</strong> to a "
+                 f"more prominent menu position or feature it as a daily special.")
+            )
+        if not _dogs.empty:
+            _insight_rows.append(
+                ("🐶", f"<strong>{len(_dogs)} Dog item{'s' if len(_dogs) != 1 else ''}</strong> — "
+                 f"low popularity and low margin. Evaluate whether each earns its place "
+                 f"on the menu or can be removed to simplify operations.")
+            )
+
+        if _insight_rows:
+            rows_html = "".join(
+                f"<div style='margin-bottom:0.4rem;'>"
+                f"<span style='margin-right:0.45rem;font-size:1rem;'>{icon}</span>{text}</div>"
+                for icon, text in _insight_rows
+            )
+            st.markdown(
+                f"<div style='background:rgba(212,168,75,0.07);"
+                f"border:1px solid rgba(212,168,75,0.22);border-radius:10px;"
+                f"padding:0.85rem 1.15rem;margin:0.5rem 0 1rem 0;font-size:0.87rem;"
+                f"color:rgba(240,242,246,0.85);line-height:1.75;'>{rows_html}</div>",
+                unsafe_allow_html=True,
+            )
+
+        # Per-quadrant detail tables
+        with st.expander("View full quadrant breakdown →", expanded=False):
+            for _q, _color in _QUAD_COLORS.items():
+                _subset = _me[_me["quadrant"] == _q].copy()
+                if _subset.empty:
+                    continue
+                _subset = _subset.sort_values("total_revenue", ascending=False)
+                _disp = _subset[["name", "category", "price", "quantity_sold",
+                                  "margin_pct", "total_revenue"]].copy()
+                _disp["price"]         = _disp["price"].apply(lambda x: f"${x:.2f}")
+                _disp["total_revenue"] = _disp["total_revenue"].apply(lambda x: f"${x:,.0f}")
+                _disp["margin_pct"]    = _disp["margin_pct"].apply(lambda x: f"{x:.1f}%")
+                _disp["quantity_sold"] = _disp["quantity_sold"].apply(lambda x: f"{x:,}")
+                _disp.columns = ["Item", "Category", "Price", "Qty Sold", "Margin %", "Revenue"]
+                st.markdown(f"**{_q}** — {len(_subset)} item{'s' if len(_subset) != 1 else ''}")
+                st.dataframe(_disp, use_container_width=True, hide_index=True)
+    else:
+        st.info(
+            "Menu Engineering Matrix requires **margin_pct** and **quantity_sold** columns. "
+            "Upload a Toast Item Selections export to enable this analysis."
+        )
+
+    st.divider()
+
 # ── Revenue & quantity by category ────────────────────────────────────────────
 section_header("Sales by Category", help="Revenue and quantity sold broken down by menu category.")
 
