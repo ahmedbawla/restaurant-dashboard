@@ -106,11 +106,29 @@ if username == "test":
                 "expenses":"Expense Analysis","cash_flow":"Cash Flow",
             }
             if _nl_start and _nl_end:
-                st.info(
-                    f"**{' · '.join(_SL[s] for s in _nl_secs)}**  \n"
-                    f"📅 {_nl_start.strftime('%b %d, %Y')} → {_nl_end.strftime('%b %d, %Y')}"
-                )
-                _nl_gen = st.button("▶ Generate Report", key="nl_gen_btn", type="primary")
+                _pdf_ready = st.session_state.get("_nl_pdf_ready")
+                if _pdf_ready and _pdf_ready.get("query") == _rq.strip():
+                    st.success("Report ready!")
+                    st.download_button(
+                        "⬇️ Download Report PDF",
+                        data=_pdf_ready["bytes"],
+                        file_name=_pdf_ready["filename"],
+                        mime="application/pdf",
+                        key="nl_pdf_dl_btn",
+                        type="primary",
+                        use_container_width=True,
+                    )
+                    if st.button("Generate a different report", key="nl_clear_btn"):
+                        st.session_state.pop("_nl_pdf_ready", None)
+                        st.rerun()
+                else:
+                    if st.session_state.get("_nl_pdf_ready"):
+                        st.session_state.pop("_nl_pdf_ready", None)
+                    st.info(
+                        f"**{' · '.join(_SL[s] for s in _nl_secs)}**  \n"
+                        f"📅 {_nl_start.strftime('%b %d, %Y')} → {_nl_end.strftime('%b %d, %Y')}"
+                    )
+                    _nl_gen = st.button("▶ Generate Report", key="nl_gen_btn", type="primary")
             else:
                 st.warning("Couldn't find a date range. Try: *q1 2025*, *february 2025*, *last month*, *2024*")
 
@@ -202,6 +220,21 @@ if gen or dl_pdf or _nl_gen:
             file_name=fname,
             mime="application/pdf",
         )
+
+    # ── NL PDF generation ─────────────────────────────────────────────────────
+    elif _nl_gen:
+        with st.spinner("Generating PDF…"):
+            pdf_bytes = generate_pdf(**kwargs)
+        _nl_fname = (
+            f"{user['restaurant_name'].replace(' ', '_')}_Report_"
+            f"{_nl_start}_{_nl_end}.pdf"
+        )
+        st.session_state["_nl_pdf_ready"] = {
+            "bytes":    pdf_bytes,
+            "filename": _nl_fname,
+            "query":    st.session_state.get("nl_report_query", "").strip(),
+        }
+        st.rerun()
 
     # ── Preview ───────────────────────────────────────────────────────────────
     if gen:
