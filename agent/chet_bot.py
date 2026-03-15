@@ -758,11 +758,22 @@ async def handle_group_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not user_message or user_message.startswith("/"):
         return
 
-    # Ignore messages directed at BART (BART handles those himself)
-    if "bart" in user_message.lower():
+    # Only respond when @mentioned or when user replies to a CHET message
+    reply_msg = update.message.reply_to_message
+    is_reply_to_me = (
+        reply_msg is not None
+        and reply_msg.from_user is not None
+        and reply_msg.from_user.id == ctx.bot.id
+    )
+    mentioned = [
+        user_message[e.offset : e.offset + e.length].lower()
+        for e in (update.message.entities or [])
+        if e.type == "mention"
+    ]
+    is_mentioned = f"@{ctx.bot.username}".lower() in mentioned
+    if not is_mentioned and not is_reply_to_me:
         return
 
-    # Respond as CHET (accounting advisor) — same logic as private chat
     await handle_private_message(update, ctx)
 
 

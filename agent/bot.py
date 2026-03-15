@@ -901,10 +901,21 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not _is_owner(update):
         return
 
-    # In the group chat BART only responds when explicitly mentioned by name
+    # In the group chat BART only responds when @mentioned or when user replies to BART
     if GROUP_CHAT_ID and update.effective_chat.id == GROUP_CHAT_ID:
-        text = (update.message.text or "").lower()
-        if "bart" not in text:
+        reply_msg = update.message.reply_to_message
+        is_reply_to_me = (
+            reply_msg is not None
+            and reply_msg.from_user is not None
+            and reply_msg.from_user.id == ctx.bot.id
+        )
+        mentioned = [
+            update.message.text[e.offset : e.offset + e.length].lower()
+            for e in (update.message.entities or [])
+            if e.type == "mention"
+        ]
+        is_mentioned = f"@{ctx.bot.username}".lower() in mentioned
+        if not is_mentioned and not is_reply_to_me:
             return
 
     import anthropic as _anthropic
