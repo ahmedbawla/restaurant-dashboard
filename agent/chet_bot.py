@@ -549,6 +549,22 @@ async def _trim_history(client, history: list) -> list:
 
 
 # ── Command handlers ──────────────────────────────────────────────────────────
+async def cmd_discuss(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """/discuss [topic] — trigger full CHET→BART→CHET autonomous discussion in the group."""
+    if not _is_owner(update):
+        return
+    if not GROUP_CHAT_ID:
+        await update.message.reply_text("TELEGRAM_GROUP_CHAT_ID is not set.")
+        return
+    topic = " ".join(ctx.args) if ctx.args else (update.message.text or "accounting improvements")
+    await update.message.reply_text("🧮 Starting CHET ↔ BART discussion… (~2 min)")
+    try:
+        await orchestrate_group_discussion(ctx.application, topic)
+    except Exception as e:
+        logger.exception("Group discussion failed")
+        await update.message.reply_text(f"❌ Discussion failed: {e}")
+
+
 async def cmd_analyze(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     """/analyze [topic] — deep accounting analysis + recommendation for BART."""
     if not _is_owner(update):
@@ -626,16 +642,16 @@ async def cmd_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
     await update.message.reply_text(
         "🧮 *CHET — Accounting Expert*\n\n"
-        "*Private chat:*\n"
-        "Just talk — ask me anything about restaurant finances or the dashboard\n"
-        "/analyze — deep analysis + recommendation for BART\n"
-        "/analyze [topic] — same, focused on a specific area\n"
-        "/recommend — send latest recommendation to BART\n"
-        "/status — show current pending recommendation\n"
-        "/clearchat — clear conversation history\n\n"
         "*Group chat:*\n"
-        "Send any message → CHET and BART discuss it and produce a recommendation\n"
-        "Then tell BART /pickup to implement it",
+        "Just talk — CHET responds as your accounting advisor\n"
+        "Mention 'Bart' to get BART's dev perspective\n"
+        "/discuss [topic] — full autonomous CHET↔BART discussion\n\n"
+        "*Private chat:*\n"
+        "Just talk — ask anything about restaurant finances or the dashboard\n"
+        "/analyze [topic] — deep analysis + recommendation for BART\n"
+        "/recommend — send latest recommendation to BART (/pickup to implement)\n"
+        "/status — show pending recommendation\n"
+        "/clearchat — clear conversation history",
         parse_mode="Markdown",
     )
 
@@ -703,7 +719,10 @@ async def handle_private_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE)
 
 # ── Group chat handler ────────────────────────────────────────────────────────
 async def handle_group_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    """Triggered when the owner sends a message to the group — starts the discussion."""
+    """CHET responds to all owner messages in the group as an accounting advisor.
+    BART is silent unless explicitly mentioned — the owner triggers BART by name.
+    To kick off a full CHET→BART→CHET discussion, use /discuss [topic].
+    """
     if not _is_owner(update):
         return
     if not GROUP_CHAT_ID or update.effective_chat.id != GROUP_CHAT_ID:
@@ -713,13 +732,12 @@ async def handle_group_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not user_message or user_message.startswith("/"):
         return
 
-    await update.message.reply_text("🧮 Starting discussion between CHET and BART… (~2 min)")
+    # Ignore messages directed at BART (BART handles those himself)
+    if "bart" in user_message.lower():
+        return
 
-    try:
-        await orchestrate_group_discussion(ctx.application, user_message)
-    except Exception as e:
-        logger.exception("Group discussion failed")
-        await _post_to_group(ctx.application, f"❌ Discussion failed: {e}")
+    # Respond as CHET (accounting advisor) — same logic as private chat
+    await handle_private_message(update, ctx)
 
 
 # ── Photo handler ─────────────────────────────────────────────────────────────
@@ -772,6 +790,7 @@ def main():
     app = Application.builder().token(BOT_TOKEN).build()
 
     for cmd, handler in [
+        ("discuss",   cmd_discuss),
         ("analyze",   cmd_analyze),
         ("recommend", cmd_recommend),
         ("status",    cmd_status),

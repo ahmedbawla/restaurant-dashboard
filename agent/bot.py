@@ -904,6 +904,12 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not _is_owner(update):
         return
 
+    # In the group chat BART only responds when explicitly mentioned by name
+    if GROUP_CHAT_ID and update.effective_chat.id == GROUP_CHAT_ID:
+        text = (update.message.text or "").lower()
+        if "bart" not in text:
+            return
+
     import anthropic as _anthropic
 
     state   = _load()
