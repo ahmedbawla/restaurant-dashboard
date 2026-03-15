@@ -37,7 +37,7 @@ ANTHROPIC_KEY = os.environ["ANTHROPIC_API_KEY"]
 GITHUB_TOKEN  = os.environ["GITHUB_TOKEN"]
 GITHUB_REPO   = os.environ.get("GITHUB_REPO", "ahmedbawla/restaurant-dashboard")
 
-STATE_FILE = Path("/tmp/agent_state.json")
+STATE_FILE = Path("/data/agent_state.json")
 
 
 # ── State persistence ─────────────────────────────────────────────────────────
