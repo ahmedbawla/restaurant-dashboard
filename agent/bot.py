@@ -335,7 +335,7 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 tools=_CHAT_TOOLS,
                 messages=history,
             )
-            history.append({"role": "assistant", "content": resp.content})
+            history.append({"role": "assistant", "content": [b.model_dump() for b in resp.content]})
 
             if resp.stop_reason == "end_turn":
                 break

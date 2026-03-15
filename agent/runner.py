@@ -195,7 +195,7 @@ The owner reviews your branch on the test account, then runs /deploy to release 
                 tools=TOOLS,
                 messages=messages,
             )
-            messages.append({"role": "assistant", "content": resp.content})
+            messages.append({"role": "assistant", "content": [b.model_dump() for b in resp.content]})
 
             if resp.stop_reason == "end_turn":
                 break
