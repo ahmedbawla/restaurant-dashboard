@@ -241,7 +241,33 @@ st.dataframe(cat_summary, use_container_width=True, hide_index=True)
 # ── Transaction detail ────────────────────────────────────────────────────────
 st.divider()
 section_header("Transaction Detail", help="Individual expense line items from QuickBooks, sorted by most recent first. Use the Category filter in the sidebar to narrow results.")
-display = filtered.copy()
+_tx_data = filtered.copy()
+if username == "test":
+    import re as _re
+    _tx_q = st.text_input(
+        "🔍 Search transactions",
+        placeholder='e.g.  "chicken",  "over $500",  "utilities under $200"',
+        key="tx_nl_search",
+    )
+    if _tx_q.strip():
+        _s = _tx_q.strip().lower()
+        _over  = _re.search(r'(?:over|above|more than|greater than)\s+\$?(\d+(?:,\d+)?(?:\.\d+)?)', _s)
+        _under = _re.search(r'(?:under|below|less than)\s+\$?(\d+(?:,\d+)?(?:\.\d+)?)', _s)
+        _mask  = pd.Series([True] * len(_tx_data), index=_tx_data.index)
+        if _over:
+            _mask &= _tx_data["amount"] > float(_over.group(1).replace(",", ""))
+        if _under:
+            _mask &= _tx_data["amount"] < float(_under.group(1).replace(",", ""))
+        _kw = _re.sub(r'(?:over|above|under|below|more than|less than|greater than)\s+\$?\d+(?:,\d+)?(?:\.\d+)?', '', _s).strip()
+        if _kw:
+            _mask &= (
+                _tx_data["vendor"].str.contains(_kw, case=False, na=False) |
+                _tx_data["category"].str.contains(_kw, case=False, na=False) |
+                _tx_data["description"].str.contains(_kw, case=False, na=False)
+            )
+        _tx_data = _tx_data[_mask]
+        st.caption(f"{len(_tx_data):,} transaction{'s' if len(_tx_data) != 1 else ''} found.")
+display = _tx_data.copy()
 display["date"]   = display["date"].dt.strftime("%Y-%m-%d")
 display["amount"] = display["amount"].apply(lambda x: f"${x:,.2f}")
 display = display[["date","category","vendor","amount","description"]].sort_values("date", ascending=False)

@@ -485,6 +485,19 @@ pd_["total_hours"]   = pd_["total_hours"].apply(lambda x: f"{x:.1f}")
 pd_ = pd_.sort_values(["dept", "employee_name"])
 pd_.columns = ["Employee", "Department", "Role", "Employment Type",
                "Regular Hrs", "Total Hrs", "Gross Pay"]
+if username == "test":
+    _emp_q = st.text_input(
+        "🔍 Search employees",
+        placeholder="Type a name, role, or department…",
+        key="payroll_emp_search",
+    )
+    if _emp_q.strip():
+        pd_ = pd_[
+            pd_["Employee"].str.contains(_emp_q.strip(), case=False, na=False) |
+            pd_["Role"].str.contains(_emp_q.strip(), case=False, na=False) |
+            pd_["Department"].str.contains(_emp_q.strip(), case=False, na=False)
+        ]
+        st.caption(f"{len(pd_):,} employee{'s' if len(pd_) != 1 else ''} found.")
 st.dataframe(pd_, use_container_width=True, height=480, hide_index=True)
 
 st.divider()

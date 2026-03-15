@@ -34,6 +34,88 @@ page_header(
 )
 st.divider()
 
+# ── NL report trigger (test account only) ────────────────────────────────────
+_nl_gen   = False
+_nl_start = _nl_end = _nl_secs = None
+
+if username == "test":
+    with st.expander("💬 Generate with natural language", expanded=False):
+        st.caption("Describe the report you want — include a date range and optionally a topic.")
+        _rq = st.text_input(
+            "What report?",
+            placeholder='e.g. "q1 2025 payroll", "revenue for february 2025", "all sections last month"',
+            key="nl_report_query",
+            label_visibility="collapsed",
+        )
+        if _rq.strip():
+            import re as _rre, calendar as _rrc
+            from datetime import timedelta as _rtd
+            _rqt    = _rq.strip().lower()
+            _rtoday = date.today()
+            _MNLM   = {
+                "january":1,"february":2,"march":3,"april":4,"may":5,"june":6,
+                "july":7,"august":8,"september":9,"october":10,"november":11,"december":12,
+                "jan":1,"feb":2,"mar":3,"apr":4,"jun":6,"jul":7,"aug":8,
+                "sep":9,"oct":10,"nov":11,"dec":12,
+            }
+            # Sections from keywords
+            _skw = {
+                "executive": any(w in _rqt for w in ("exec","summary","overview","all","full")),
+                "revenue":   any(w in _rqt for w in ("revenue","sales","income","all","full")),
+                "labor":     any(w in _rqt for w in ("payroll","labor","labour","staff","wages","hours","all","full")),
+                "food_cost": any(w in _rqt for w in ("food","inventory","all","full")),
+                "expenses":  any(w in _rqt for w in ("expense","spend","spending","all","full")),
+                "cash_flow": any(w in _rqt for w in ("cash","flow","all","full")),
+            }
+            _nl_secs = [k for k, v in _skw.items() if v] or list(_skw.keys())
+            # Date parse
+            if "last month" in _rqt:
+                _prev = _rtoday.replace(day=1) - _rtd(days=1)
+                _nl_start, _nl_end = date(_prev.year, _prev.month, 1), _prev
+            elif "this month" in _rqt:
+                _nl_start = _rtoday.replace(day=1)
+                _nl_end   = date(_rtoday.year, _rtoday.month, _rrc.monthrange(_rtoday.year, _rtoday.month)[1])
+            elif "last year" in _rqt:
+                _nl_start, _nl_end = date(_rtoday.year-1, 1, 1), date(_rtoday.year-1, 12, 31)
+            elif "this year" in _rqt:
+                _nl_start, _nl_end = date(_rtoday.year, 1, 1), _rtoday
+            else:
+                _qm2 = _rre.search(r"q([1-4])\s*(\d{4})", _rqt) or _rre.search(r"(\d{4})\s*q([1-4])", _rqt)
+                if _qm2:
+                    _g2 = _qm2.groups()
+                    _q2, _y2 = (int(_g2[0]), int(_g2[1])) if len(_g2[0]) == 1 else (int(_g2[1]), int(_g2[0]))
+                    _sm2, _em2 = (_q2-1)*3+1, _q2*3
+                    _nl_start = date(_y2, _sm2, 1)
+                    _nl_end   = date(_y2, _em2, _rrc.monthrange(_y2, _em2)[1])
+                else:
+                    for _mn, _mnum in _MNLM.items():
+                        if _rre.search(r"\b" + _mn + r"\b", _rqt):
+                            _ym2 = _rre.search(r"\b(\d{4})\b", _rqt)
+                            _y2  = int(_ym2.group(1)) if _ym2 else _rtoday.year
+                            _nl_start = date(_y2, _mnum, 1)
+                            _nl_end   = date(_y2, _mnum, _rrc.monthrange(_y2, _mnum)[1])
+                            break
+                    if _nl_start is None:
+                        _ym2 = _rre.search(r"\b(20\d{2}|19\d{2})\b", _rqt)
+                        if _ym2:
+                            _y2 = int(_ym2.group(1))
+                            _nl_start, _nl_end = date(_y2, 1, 1), date(_y2, 12, 31)
+            _SL = {
+                "executive":"Executive Summary","revenue":"Revenue & Sales",
+                "labor":"Labour & Payroll","food_cost":"Food Cost & Inventory",
+                "expenses":"Expense Analysis","cash_flow":"Cash Flow",
+            }
+            if _nl_start and _nl_end:
+                st.info(
+                    f"**{' · '.join(_SL[s] for s in _nl_secs)}**  \n"
+                    f"📅 {_nl_start.strftime('%b %d, %Y')} → {_nl_end.strftime('%b %d, %Y')}"
+                )
+                _nl_gen = st.button("▶ Generate Report", key="nl_gen_btn", type="primary")
+            else:
+                st.warning("Couldn't find a date range. Try: *q1 2025*, *february 2025*, *last month*, *2024*")
+
+st.divider()
+
 
 # ── Insight card helper ───────────────────────────────────────────────────────
 def _insights(items: list[tuple[str, str]]) -> None:
@@ -74,6 +156,12 @@ selected = [k for k, v in [
     ("food_cost", inc_food), ("expenses", inc_expenses), ("cash_flow", inc_cf),
 ] if v]
 
+# NL override (must come after checkboxes so selected/dates are defined)
+if _nl_gen and _nl_start and _nl_end:
+    start_date = _nl_start.isoformat()
+    end_date   = _nl_end.isoformat()
+    selected   = _nl_secs
+
 st.divider()
 
 # ── Action bar ────────────────────────────────────────────────────────────────
@@ -83,7 +171,7 @@ gen    = b1.button("🔄 Preview Report", use_container_width=True)
 dl_pdf = b2.button("📥 Download PDF",   use_container_width=True)
 
 # ── Load data (shared) ────────────────────────────────────────────────────────
-if gen or dl_pdf:
+if gen or dl_pdf or _nl_gen:
     if not selected:
         st.warning("Select at least one section.")
         st.stop()
