@@ -169,6 +169,31 @@ async def cmd_do(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🧠 Extracting task from our conversation…")
     try:
         client = _anthropic.Anthropic(api_key=ANTHROPIC_KEY)
+
+        # Strip tool_use/tool_result pairs from history — keep only text turns.
+        # The extraction call doesn't need tool results, and passing them without
+        # tool definitions causes a 400 invalid_request_error.
+        clean_history = []
+        skip_next = False
+        for msg in history:
+            if skip_next:
+                skip_next = False
+                continue
+            content = msg["content"]
+            if isinstance(content, str):
+                clean_history.append(msg)
+            elif isinstance(content, list):
+                has_tool_use    = any(isinstance(b, dict) and b.get("type") == "tool_use"    for b in content)
+                has_tool_result = any(isinstance(b, dict) and b.get("type") == "tool_result" for b in content)
+                texts = [b["text"] for b in content if isinstance(b, dict) and b.get("type") == "text" and b.get("text", "").strip()]
+                if has_tool_result:
+                    continue  # drop tool_result user messages
+                if has_tool_use and not texts:
+                    skip_next = True  # pure tool_use with no text — drop it and its result
+                    continue
+                if texts:
+                    clean_history.append({"role": msg["role"], "content": "\n".join(texts)})
+
         extraction_prompt = (
             "Based on the conversation so far, write ONE concise sentence describing "
             "the single most specific code change to implement next. "
@@ -179,7 +204,7 @@ async def cmd_do(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             model="claude-sonnet-4-6",
             max_tokens=100,
             system="You extract clear, actionable task descriptions from developer conversations.",
-            messages=history + [{"role": "user", "content": extraction_prompt}],
+            messages=clean_history + [{"role": "user", "content": extraction_prompt}],
         )
         focus = ""
         for block in summary_resp.content:
