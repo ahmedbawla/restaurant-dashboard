@@ -146,7 +146,16 @@ async def cmd_promote(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
 
     repo_url = f"https://x-access-token:{GITHUB_TOKEN}@github.com/{GITHUB_REPO}.git"
-    await update.message.reply_text("🔓 Removing test gates and deploying to all users…")
+    await update.message.reply_text(f"🔓 Promoting {len(files)} file(s): {', '.join(files)}")
+
+    def _strip_fences(text: str) -> str:
+        """Remove markdown code fences Claude sometimes adds despite instructions."""
+        text = text.strip()
+        if text.startswith("```"):
+            text = text.split("\n", 1)[-1]  # drop first line (```python etc)
+        if text.endswith("```"):
+            text = text.rsplit("\n", 1)[0]  # drop last line
+        return text.strip()
 
     def _do():
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -156,13 +165,16 @@ async def cmd_promote(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
             client = _anthropic.Anthropic(api_key=ANTHROPIC_KEY)
             promoted_any = False
+            log = []
 
             for filepath in files:
                 full = Path(tmpdir) / filepath
                 if not full.exists():
+                    log.append(f"⚠️ {filepath}: not found on main")
                     continue
                 original = full.read_text(encoding="utf-8")
                 if 'username == "test"' not in original and "username == 'test'" not in original:
+                    log.append(f"⏭️ {filepath}: no test gates found, skipped")
                     continue
 
                 resp = client.messages.create(
@@ -171,48 +183,56 @@ async def cmd_promote(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                     system=(
                         "You are a code editor. Remove all `if username == \"test\":` gate wrappers "
                         "from the file so the enclosed features run for ALL users. "
-                        "De-indent the gated code by one level. "
+                        "De-indent the enclosed code by one level. "
                         "Remove any `username = st.session_state.get(\"username\", \"\")` lines that "
                         "only existed to support the test gate. "
-                        "Return ONLY the complete updated file, no explanation, no markdown fences."
+                        "Return ONLY the raw Python file content. "
+                        "Do NOT wrap in markdown fences. Do NOT add any explanation."
                     ),
                     messages=[{"role": "user", "content": f"File: {filepath}\n\n{original}"}],
                 )
-                promoted = resp.content[0].text.strip() if resp.content else None
-                if promoted and promoted != original.strip():
-                    full.write_text(promoted, encoding="utf-8")
-                    promoted_any = True
+                promoted = _strip_fences(resp.content[0].text) if resp.content else None
+                if not promoted:
+                    log.append(f"⚠️ {filepath}: Claude returned empty response")
+                    continue
+                if promoted == original.strip():
+                    log.append(f"⚠️ {filepath}: Claude returned file unchanged")
+                    continue
+                full.write_text(promoted + "\n", encoding="utf-8")
+                promoted_any = True
+                log.append(f"✅ {filepath}: test gates removed")
 
             if not promoted_any:
-                raise RuntimeError(
-                    "No test-gated code found in the changed files.\n"
-                    "If you already promoted once, the gates are already removed."
-                )
+                raise RuntimeError("\n".join(log) or "No test-gated files found.")
 
             subprocess.run("git add -A", shell=True, cwd=tmpdir, check=True)
-            subprocess.run(
+            commit = subprocess.run(
                 "git commit -m 'promote: remove test gates — release to all users'",
-                shell=True, cwd=tmpdir, check=True, capture_output=True,
+                shell=True, cwd=tmpdir, capture_output=True, text=True,
             )
-            result = subprocess.run(
+            if commit.returncode != 0:
+                raise RuntimeError(f"git commit failed:\n{commit.stderr or commit.stdout}")
+
+            push = subprocess.run(
                 "git push origin main",
                 shell=True, cwd=tmpdir, capture_output=True, text=True,
             )
-            if result.returncode != 0:
-                raise RuntimeError(result.stderr.strip().replace(GITHUB_TOKEN, "***"))
+            if push.returncode != 0:
+                raise RuntimeError(push.stderr.strip().replace(GITHUB_TOKEN, "***"))
+
+            return "\n".join(log)
 
     try:
-        await asyncio.get_event_loop().run_in_executor(None, _do)
+        log = await asyncio.get_event_loop().run_in_executor(None, _do)
         state["last_files"] = []
         state["last_branch"] = None
         _save(state)
         await update.message.reply_text(
-            "✅ Promoted! Test gates removed — feature is now live for all users.\n"
-            "Streamlit Cloud will redeploy automatically.",
+            f"✅ Promoted! Live for all users.\n\n{log}\n\nStreamlit Cloud is redeploying."
         )
     except Exception as e:
         err = str(e).replace(GITHUB_TOKEN, "***")
-        await update.message.reply_text(f"❌ Promote failed:\n{err[:500]}")
+        await update.message.reply_text(f"❌ Promote failed:\n{err[:800]}")
 
 
 async def cmd_reject(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
