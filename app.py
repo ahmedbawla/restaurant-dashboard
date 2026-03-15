@@ -239,7 +239,7 @@ with st.sidebar:
 
     _view = st.selectbox(
         "View",
-        ["Weekly", "Monthly", "Current Quarter", "Last Quarter", "Annual", "Custom", "Natural Language"],
+        ["Weekly", "Monthly", "Current Quarter", "Last Quarter", "Annual", "Custom"],
         key="date_view_select",
     )
 
@@ -282,21 +282,7 @@ with st.sidebar:
         _start_d = _today - timedelta(days=365)
         _end_d   = _today
 
-    elif _view == "Custom":
-        _default_start = max(min_d, max_d - timedelta(days=89))
-        _picked = st.date_input(
-            "Date Range",
-            value=(_default_start, max_d),
-            min_value=min_d,
-            max_value=max_d,
-            key="global_date_range",
-        )
-        if isinstance(_picked, (list, tuple)) and len(_picked) == 2:
-            _start_d, _end_d = _picked[0], _picked[1]
-        else:
-            _start_d, _end_d = _default_start, max_d
-
-    else:  # Natural Language
+    else:  # Custom
         _nl_input = st.text_input(
             "Describe a date range",
             placeholder="e.g. february 2025, q1 2025, jan to march 2025…",
@@ -312,7 +298,7 @@ with st.sidebar:
         else:
             _start_d, _end_d = max_d - timedelta(days=6), max_d
 
-    if _view != "Custom":
+    if True:
         # Clamp to the range of data we actually have
         _start_d = max(min_d, _start_d)
         _end_d   = min(max_d, _end_d)
