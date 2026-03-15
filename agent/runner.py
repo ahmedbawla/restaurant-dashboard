@@ -186,6 +186,14 @@ The owner reviews your branch on the test account, then runs /deploy to release 
             }
         ]
 
+        def _serialize(block) -> dict:
+            """Minimal serialization — only the fields the API actually needs."""
+            if block.type == "text":
+                return {"type": "text", "text": block.text}
+            if block.type == "tool_use":
+                return {"type": "tool_use", "id": block.id, "name": block.name, "input": block.input}
+            return {"type": block.type}
+
         resp = None
         for _ in range(40):
             resp = client.messages.create(
@@ -195,12 +203,13 @@ The owner reviews your branch on the test account, then runs /deploy to release 
                 tools=TOOLS,
                 messages=messages,
             )
-            messages.append({"role": "assistant", "content": [b.model_dump() for b in resp.content]})
 
             if resp.stop_reason == "end_turn":
+                messages.append({"role": "assistant", "content": [_serialize(b) for b in resp.content]})
                 break
 
             if resp.stop_reason == "tool_use":
+                messages.append({"role": "assistant", "content": [_serialize(b) for b in resp.content]})
                 results = []
                 for block in resp.content:
                     if block.type == "tool_use":
@@ -211,6 +220,9 @@ The owner reviews your branch on the test account, then runs /deploy to release 
                             "content": out,
                         })
                 messages.append({"role": "user", "content": results})
+            else:
+                # max_tokens or any other stop reason — don't add to messages, just stop
+                break
 
         # Push branch
         _git(f"push origin {branch}", tmpdir)

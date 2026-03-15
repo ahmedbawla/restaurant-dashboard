@@ -435,6 +435,13 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         client = _anthropic.Anthropic(api_key=ANTHROPIC_KEY)
         resp   = None
 
+        def _serialize(block) -> dict:
+            if block.type == "text":
+                return {"type": "text", "text": block.text}
+            if block.type == "tool_use":
+                return {"type": "tool_use", "id": block.id, "name": block.name, "input": block.input}
+            return {"type": block.type}
+
         for _ in range(15):
             resp = client.messages.create(
                 model="claude-sonnet-4-6",
@@ -443,12 +450,13 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 tools=_CHAT_TOOLS,
                 messages=history,
             )
-            history.append({"role": "assistant", "content": [b.model_dump() for b in resp.content]})
 
             if resp.stop_reason == "end_turn":
+                history.append({"role": "assistant", "content": [_serialize(b) for b in resp.content]})
                 break
 
             if resp.stop_reason == "tool_use":
+                history.append({"role": "assistant", "content": [_serialize(b) for b in resp.content]})
                 await ctx.bot.send_chat_action(update.effective_chat.id, "typing")
                 results = []
                 for block in resp.content:
@@ -460,6 +468,8 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                             "content": out[:8000],
                         })
                 history.append({"role": "user", "content": results})
+            else:
+                break  # max_tokens or unknown — stop cleanly
 
         reply = "No response."
         if resp:
