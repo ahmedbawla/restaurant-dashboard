@@ -1,0 +1,210 @@
+"""
+Autonomous coding agent — uses Claude Sonnet to improve the dashboard.
+Clones the repo, makes 1-2 targeted changes, pushes to a new branch.
+"""
+
+import os
+import subprocess
+import tempfile
+from datetime import datetime, timezone
+from pathlib import Path
+
+import anthropic
+
+TOOLS = [
+    {
+        "name": "read_file",
+        "description": "Read a file's contents from the repository.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "Path relative to repo root"},
+            },
+            "required": ["path"],
+        },
+    },
+    {
+        "name": "list_files",
+        "description": "List files in a directory of the repository.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "directory": {
+                    "type": "string",
+                    "description": "Directory relative to repo root. Use '.' for root.",
+                },
+            },
+            "required": ["directory"],
+        },
+    },
+    {
+        "name": "write_file",
+        "description": "Write or overwrite a file to implement an improvement.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "Path relative to repo root"},
+                "content": {"type": "string", "description": "Full file content"},
+            },
+            "required": ["path", "content"],
+        },
+    },
+    {
+        "name": "git",
+        "description": "Run a git command in the repository.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "args": {
+                    "type": "string",
+                    "description": "git arguments e.g. 'status' or 'diff HEAD'",
+                },
+            },
+            "required": ["args"],
+        },
+    },
+]
+
+
+def _git(args: str, cwd: str) -> str:
+    result = subprocess.run(
+        f"git {args}",
+        shell=True,
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    return (result.stdout + result.stderr).strip()[:3000]
+
+
+def run_agent(
+    github_token: str,
+    github_repo: str,
+    anthropic_api_key: str,
+    focus: str | None = None,
+) -> dict:
+    """
+    Clone repo, run Claude Sonnet to make improvements, push to a new branch.
+    Returns {"branch": str, "summary": str}.
+    """
+    branch = f"agent/{datetime.now(timezone.utc).strftime('%Y-%m-%d-%H%M')}"
+    repo_url = f"https://x-access-token:{github_token}@github.com/{github_repo}.git"
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        # Clone
+        subprocess.run(
+            ["git", "clone", repo_url, tmpdir],
+            check=True, capture_output=True, text=True,
+        )
+        _git("config user.email 'agent@dashboard.bot'", tmpdir)
+        _git("config user.name 'Dashboard Agent'", tmpdir)
+        _git(f"checkout -b {branch}", tmpdir)
+
+        # ── Tool implementations ─────────────────────────────────────────────
+        def read_file(path: str) -> str:
+            full = Path(tmpdir) / path
+            if not full.exists():
+                return f"File not found: {path}"
+            if full.stat().st_size > 60_000:
+                return f"File too large to read in full ({full.stat().st_size} bytes)."
+            try:
+                return full.read_text(encoding="utf-8")
+            except Exception as e:
+                return f"Error: {e}"
+
+        def list_files(directory: str) -> str:
+            full = Path(tmpdir) / directory
+            if not full.exists():
+                return f"Directory not found: {directory}"
+            lines = []
+            for p in sorted(full.rglob("*")):
+                if not p.is_file():
+                    continue
+                rel = str(p.relative_to(tmpdir))
+                if any(part.startswith((".", "__pycache__")) for part in Path(rel).parts):
+                    continue
+                lines.append(rel)
+            return "\n".join(lines[:150])
+
+        def write_file(path: str, content: str) -> str:
+            full = Path(tmpdir) / path
+            full.parent.mkdir(parents=True, exist_ok=True)
+            full.write_text(content, encoding="utf-8")
+            return f"Written: {path}"
+
+        def execute(name: str, inputs: dict) -> str:
+            if name == "read_file":  return read_file(inputs["path"])
+            if name == "list_files": return list_files(inputs["directory"])
+            if name == "write_file": return write_file(inputs["path"], inputs["content"])
+            if name == "git":        return _git(inputs["args"], tmpdir)
+            return f"Unknown tool: {name}"
+
+        # ── Run Claude ───────────────────────────────────────────────────────
+        client = anthropic.Anthropic(api_key=anthropic_api_key)
+        focus_line = f"\nFocus area: {focus}" if focus else \
+                     "\nNo specific focus — choose the most impactful improvement you find."
+
+        system = f"""You are an autonomous coding agent improving a Streamlit restaurant analytics dashboard.
+The app has pages: Summary, Spending (QuickBooks), Payroll (Paychex), Inventory, Sales, Reports, Account.
+{focus_line}
+
+Your task:
+1. Explore the codebase — list files, read the most relevant pages/components
+2. Identify 1-2 specific, meaningful improvements (bugs, UX polish, edge cases, small features)
+3. Implement the changes by writing updated files
+4. Stage and commit your changes: `git add -A && git commit -m "agent: <short description>"`
+5. End with a plain-English summary the owner can read in 30 seconds
+
+Rules:
+- Change at most 2 files per run
+- Never touch: auth.py, data/database.py, config.json, or any file containing secrets
+- Ensure all Python is syntactically valid
+- Keep changes small and focused — this is reviewed before deploying
+- Do NOT push — the bot handles pushing after you finish"""
+
+        messages = [
+            {
+                "role": "user",
+                "content": "Start by listing the project files, then explore and implement 1-2 improvements.",
+            }
+        ]
+
+        resp = None
+        for _ in range(40):
+            resp = client.messages.create(
+                model="claude-sonnet-4-5",
+                max_tokens=4096,
+                system=system,
+                tools=TOOLS,
+                messages=messages,
+            )
+            messages.append({"role": "assistant", "content": resp.content})
+
+            if resp.stop_reason == "end_turn":
+                break
+
+            if resp.stop_reason == "tool_use":
+                results = []
+                for block in resp.content:
+                    if block.type == "tool_use":
+                        out = execute(block.name, block.input)
+                        results.append({
+                            "type": "tool_result",
+                            "tool_use_id": block.id,
+                            "content": out,
+                        })
+                messages.append({"role": "user", "content": results})
+
+        # Push branch
+        _git(f"push origin {branch}", tmpdir)
+
+        # Extract summary from final message
+        summary = "Agent completed — no summary provided."
+        if resp:
+            for block in reversed(resp.content):
+                if hasattr(block, "text") and block.text.strip():
+                    summary = block.text.strip()
+                    break
+
+        return {"branch": branch, "summary": summary}
