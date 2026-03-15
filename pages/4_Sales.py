@@ -3,6 +3,7 @@ Sales Analysis — Toast POS sales data.
 """
 
 import pandas as pd
+import plotly.graph_objects as go
 import streamlit as st
 
 from components.charts import (
@@ -98,10 +99,6 @@ if username == "test":
                     return None
                 return f"{(cur / prev - 1) * 100:+.1f}% vs prior week"
 
-            def _delta_color(cur, prev):
-                """Return 'normal' (green up), 'inverse' not used — use default."""
-                return "normal"
-
             section_header(
                 "Week-over-Week Snapshot",
                 help=(
@@ -160,7 +157,6 @@ if username == "test":
                 )
 
             # Mini bar chart: daily revenue for both weeks side by side
-            import plotly.graph_objects as go
             _LAYOUT_WOW = dict(
                 plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
                 font=dict(color="rgba(240,242,246,0.75)", size=11),
@@ -233,6 +229,216 @@ if username == "test":
                 )
 
             st.divider()
+
+# ── Daily Revenue Goal Tracker (test account only) ───────────────────────────
+if username == "test":
+    # Default goal = 5 % above the period average (round to nearest $50)
+    _avg_rev = daily_sales["revenue"].mean() if not daily_sales.empty else 5000.0
+    _default_goal = max(500.0, round(_avg_rev * 1.05 / 50) * 50)
+
+    # Persist goal in session_state across reruns
+    if "daily_revenue_goal" not in st.session_state:
+        st.session_state["daily_revenue_goal"] = _default_goal
+
+    section_header(
+        "Daily Revenue Goal Tracker",
+        help=(
+            "Set a daily revenue target and see how each day in the selected period "
+            "measured up. The default goal is 5% above your period average, "
+            "rounded to the nearest $50."
+        ),
+    )
+
+    # Goal input row
+    _goal_col, _spacer = st.columns([1, 3])
+    with _goal_col:
+        _goal = st.number_input(
+            "Daily Revenue Goal ($)",
+            min_value=100.0,
+            max_value=500_000.0,
+            value=float(st.session_state["daily_revenue_goal"]),
+            step=50.0,
+            format="%.0f",
+            key="goal_input",
+            help="Adjust your daily revenue target. The tracker updates immediately.",
+        )
+        st.session_state["daily_revenue_goal"] = _goal
+
+    # ── KPI summary row ───────────────────────────────────────────────────────
+    _ds_goal = daily_sales.copy()
+    _ds_goal["hit_goal"] = _ds_goal["revenue"] >= _goal
+    _days_total  = len(_ds_goal)
+    _days_hit    = int(_ds_goal["hit_goal"].sum())
+    _days_missed = _days_total - _days_hit
+    _hit_pct     = _days_hit / _days_total * 100 if _days_total else 0.0
+
+    # Revenue on goal days vs miss days
+    _rev_on_hit   = _ds_goal.loc[_ds_goal["hit_goal"],  "revenue"].sum()
+    _rev_on_miss  = _ds_goal.loc[~_ds_goal["hit_goal"], "revenue"].sum()
+    _avg_shortfall = (
+        (_goal - _ds_goal.loc[~_ds_goal["hit_goal"], "revenue"]).mean()
+        if _days_missed > 0 else 0.0
+    )
+
+    _g1, _g2, _g3, _g4, _g5 = st.columns(5)
+    with _g1:
+        st.metric(
+            "Days Hit Goal",
+            f"{_days_hit} / {_days_total}",
+            delta=f"{_hit_pct:.0f}% attainment",
+            delta_color="normal" if _hit_pct >= 50 else "inverse",
+            help="Number of days where revenue met or exceeded your goal.",
+        )
+    with _g2:
+        st.metric(
+            "Days Missed Goal",
+            f"{_days_missed}",
+            delta=f"-{100 - _hit_pct:.0f}% of days" if _days_missed else "0 misses",
+            delta_color="inverse" if _days_missed else "off",
+            help="Number of days where revenue fell short of your goal.",
+        )
+    with _g3:
+        st.metric(
+            "Avg Shortfall on Miss Days",
+            format_currency(_avg_shortfall) if _days_missed else "—",
+            help="Average gap between goal and actual revenue on days that missed target.",
+        )
+    with _g4:
+        _best_above = (_ds_goal["revenue"] - _goal).max()
+        st.metric(
+            "Best Day Above Goal",
+            format_currency(_best_above) if _best_above > 0 else "—",
+            help="Largest single-day surplus above the goal in the selected period.",
+        )
+    with _g5:
+        _potential_gained = _avg_shortfall * _days_missed
+        st.metric(
+            "Potential Revenue Gap",
+            format_currency(_potential_gained) if _days_missed else format_currency(0),
+            help=(
+                "Total estimated revenue gap on miss days "
+                "(average shortfall × number of miss days). "
+                "Closing even half this gap represents a meaningful revenue uplift."
+            ),
+        )
+
+    # ── Goal attainment bar chart ─────────────────────────────────────────────
+    _ds_goal_sorted = _ds_goal.sort_values("date")
+    _colors_goal = [
+        "#2ecc71" if hit else "#e74c3c"
+        for hit in _ds_goal_sorted["hit_goal"]
+    ]
+    _LAYOUT_GOAL = dict(
+        plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+        font=dict(color="rgba(240,242,246,0.75)", size=11),
+        title_font=dict(size=13, color="rgba(240,242,246,0.6)"),
+        margin=dict(l=0, r=0, t=42, b=0),
+        legend=dict(bgcolor="rgba(0,0,0,0)", bordercolor="rgba(255,255,255,0.08)", borderwidth=1),
+        showlegend=True,
+    )
+    _GRID_GOAL = dict(gridcolor="rgba(255,255,255,0.06)", zerolinecolor="rgba(255,255,255,0.08)")
+
+    _fig_goal = go.Figure()
+
+    # Bars coloured green/red by goal attainment
+    _fig_goal.add_trace(go.Bar(
+        x=_ds_goal_sorted["date"],
+        y=_ds_goal_sorted["revenue"],
+        marker_color=_colors_goal,
+        marker_line_width=0,
+        name="Daily Revenue",
+        customdata=(_ds_goal_sorted["revenue"] - _goal).values,
+        hovertemplate=(
+            "<b>%{x}</b><br>"
+            "Revenue: $%{y:,.0f}<br>"
+            "vs Goal: %{customdata:+,.0f}"
+            "<extra></extra>"
+        ),
+    ))
+
+    # Goal line
+    _fig_goal.add_hline(
+        y=_goal,
+        line_dash="dash",
+        line_color="rgba(212,168,75,0.85)",
+        line_width=2,
+        annotation_text=f"Goal: {format_currency(_goal)}",
+        annotation_font_color="rgba(212,168,75,0.9)",
+        annotation_position="top right",
+    )
+
+    # Period average line
+    _fig_goal.add_hline(
+        y=_avg_rev,
+        line_dash="dot",
+        line_color="rgba(91,155,213,0.6)",
+        line_width=1.5,
+        annotation_text=f"Avg: {format_currency(_avg_rev)}",
+        annotation_font_color="rgba(91,155,213,0.8)",
+        annotation_position="bottom right",
+    )
+
+    # Invisible traces for legend
+    _fig_goal.add_trace(go.Bar(
+        x=[None], y=[None],
+        marker_color="#2ecc71",
+        name="✓ Hit Goal",
+        showlegend=True,
+    ))
+    _fig_goal.add_trace(go.Bar(
+        x=[None], y=[None],
+        marker_color="#e74c3c",
+        name="✗ Missed Goal",
+        showlegend=True,
+    ))
+
+    _fig_goal.update_layout(
+        title="Daily Revenue vs Goal",
+        xaxis=dict(**_GRID_GOAL),
+        yaxis=dict(tickprefix="$", **_GRID_GOAL),
+        barmode="overlay",
+        **_LAYOUT_GOAL,
+    )
+    st.plotly_chart(_fig_goal, use_container_width=True)
+
+    # ── Insight callout ───────────────────────────────────────────────────────
+    if _hit_pct >= 70:
+        _insight_icon, _insight_color = "🏆", "rgba(46,204,113,0.12)"
+        _insight_border = "rgba(46,204,113,0.3)"
+        _insight_msg = (
+            f"Strong performance — revenue hit the <strong>{format_currency(_goal)}</strong> daily goal "
+            f"on <strong>{_days_hit} of {_days_total} days ({_hit_pct:.0f}%)</strong>. "
+            f"Keep momentum by protecting staffing and marketing on your strongest days."
+        )
+    elif _hit_pct >= 40:
+        _insight_icon, _insight_color = "⚠️", "rgba(212,168,75,0.10)"
+        _insight_border = "rgba(212,168,75,0.3)"
+        _insight_msg = (
+            f"Goal was reached on <strong>{_days_hit} of {_days_total} days ({_hit_pct:.0f}%)</strong>. "
+            f"Average shortfall on miss days: <strong>{format_currency(_avg_shortfall)}</strong>. "
+            f"Investigate whether missed days cluster on specific days of the week or times of month."
+        )
+    else:
+        _insight_icon, _insight_color = "📉", "rgba(231,76,60,0.10)"
+        _insight_border = "rgba(231,76,60,0.3)"
+        _insight_msg = (
+            f"Goal was reached on only <strong>{_days_hit} of {_days_total} days ({_hit_pct:.0f}%)</strong>. "
+            f"Consider whether the <strong>{format_currency(_goal)}</strong> target is calibrated correctly, "
+            f"or whether pricing, covers, or marketing need adjustment to close the "
+            f"<strong>{format_currency(_potential_gained)}</strong> total gap."
+        )
+
+    st.markdown(
+        f"<div style='background:{_insight_color};"
+        f"border:1px solid {_insight_border};border-radius:10px;"
+        f"padding:0.75rem 1.1rem;margin:0.2rem 0 0.5rem 0;font-size:0.87rem;"
+        f"color:rgba(240,242,246,0.85);'>"
+        f"{_insight_icon} {_insight_msg}"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
+
+    st.divider()
 
 # ── Period-over-period ────────────────────────────────────────────────────────
 mid = len(daily_sales) // 2
