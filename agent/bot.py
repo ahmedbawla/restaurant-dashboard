@@ -850,6 +850,29 @@ def _chat_execute_tool(name: str, inputs: dict) -> str:
     return f"Unknown tool: {name}"
 
 
+_DETAIL_WORDS = {"detail", "details", "detailed", "explain", "elaborate", "more", "why", "how", "example", "walk", "show", "breakdown", "break"}
+
+def _wants_detail(user_text: str) -> bool:
+    words = set(user_text.lower().split())
+    return bool(words & _DETAIL_WORDS)
+
+
+async def _condense(client, reply: str, user_text: str) -> str:
+    """Shorten reply to 2-3 sentences unless the user asked for detail."""
+    if _wants_detail(user_text) or len(reply) < 280:
+        return reply
+    try:
+        resp = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=120,
+            system="Summarize the following response in 2-3 short sentences. Keep specific facts, numbers, and file names. No intro phrases.",
+            messages=[{"role": "user", "content": reply}],
+        )
+        return resp.content[0].text.strip()
+    except Exception:
+        return reply
+
+
 async def _trim_history(client, history: list) -> list:
     """Summarize the oldest messages when history gets long, preserving recent context."""
     if len(history) <= 30:
@@ -901,8 +924,8 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not _is_owner(update):
         return
 
-    # In the group chat BART only responds when @mentioned or when user replies to BART
-    if GROUP_CHAT_ID and update.effective_chat.id == GROUP_CHAT_ID:
+    # In any group/supergroup BART only responds when @mentioned or replied to
+    if update.effective_chat.type in ("group", "supergroup"):
         reply_msg = update.message.reply_to_message
         is_reply_to_me = (
             reply_msg is not None
@@ -977,6 +1000,7 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                     reply = block.text.strip()
                     break
 
+        reply = await _condense(client, reply, update.message.text or "")
         state["chat_history"] = history
         _save(state)
         await _send_reply(update, reply)

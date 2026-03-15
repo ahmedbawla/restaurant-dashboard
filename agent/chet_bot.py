@@ -537,6 +537,27 @@ Rules:
 - Think like the owner's accountant: practical, direct, numbers-focused"""
 
 
+_DETAIL_WORDS = {"detail", "details", "detailed", "explain", "elaborate", "more", "why", "how", "example", "walk", "show", "breakdown", "break"}
+
+def _wants_detail(user_text: str) -> bool:
+    return bool(set(user_text.lower().split()) & _DETAIL_WORDS)
+
+
+async def _condense(client, reply: str, user_text: str) -> str:
+    if _wants_detail(user_text) or len(reply) < 280:
+        return reply
+    try:
+        resp = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=120,
+            system="Summarize in 2-3 short sentences. Keep specific facts, numbers, file names. No intro phrases.",
+            messages=[{"role": "user", "content": reply}],
+        )
+        return resp.content[0].text.strip()
+    except Exception:
+        return reply
+
+
 # ── History management ────────────────────────────────────────────────────────
 async def _trim_history(client, history: list) -> list:
     if len(history) <= 30:
@@ -736,6 +757,7 @@ async def handle_private_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE)
                     reply = block.text.strip()
                     break
 
+        reply = await _condense(client, reply, update.message.text or "")
         await _send_reply(update, reply)
 
     except Exception as e:
@@ -751,7 +773,7 @@ async def handle_group_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     """
     if not _is_owner(update):
         return
-    if not GROUP_CHAT_ID or update.effective_chat.id != GROUP_CHAT_ID:
+    if update.effective_chat.type not in ("group", "supergroup"):
         return
 
     user_message = update.message.text
