@@ -1,12 +1,17 @@
 """
-CHET — Chief accounting expert bot for TableMetrics.
+CHET — Chief Accounting Expert for TableMetrics.
 
 Commands:
-  /analyze [topic]   Deep accounting analysis of the dashboard + recommendation
-  /recommend         Package current recommendation and make it available to BART
+  /analyze [topic]   Deep accounting analysis + recommendation for BART
+  /recommend         Send current recommendation to BART via shared state
   /status            Show current pending recommendation
   /clearchat         Clear conversation history
   /help              Show this list
+
+Group chat:
+  Send any message in the group → CHET and BART discuss it autonomously.
+  CHET goes first and last; BART responds in the middle using his own token.
+  After the discussion, CHET saves a recommendation. Tell BART /pickup to implement.
 """
 
 import asyncio
@@ -21,7 +26,13 @@ from pathlib import Path
 import anthropic
 import requests as _requests
 from telegram import Update
-from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    ContextTypes,
+    MessageHandler,
+    filters,
+)
 
 from accountant import run_accountant
 
@@ -33,13 +44,14 @@ logger = logging.getLogger(__name__)
 
 # ── Config ────────────────────────────────────────────────────────────────────
 BOT_TOKEN     = os.environ["CHET_BOT_TOKEN"]
+BART_BOT_TOKEN = os.environ.get("BART_BOT_TOKEN", "")
 OWNER_CHAT_ID = int(os.environ["TELEGRAM_CHAT_ID"])
 ANTHROPIC_KEY = os.environ["ANTHROPIC_API_KEY"]
 GITHUB_TOKEN  = os.environ["GITHUB_TOKEN"]
 GITHUB_REPO   = os.environ.get("GITHUB_REPO", "ahmedbawla/restaurant-dashboard")
 GROUP_CHAT_ID = int(os.environ.get("TELEGRAM_GROUP_CHAT_ID", 0))
 
-CHET_STATE_FILE = Path("/data/chet_state.json")
+CHET_STATE_FILE          = Path("/data/chet_state.json")
 CHET_RECOMMENDATION_FILE = Path("/data/chet_recommendation.json")
 
 _DB_SCHEMA = """
@@ -47,11 +59,14 @@ Database tables (PostgreSQL, all scoped by username):
 - daily_sales: date, covers, revenue, avg_check, food_cost, food_cost_pct
 - hourly_sales: date, hour, covers, revenue
 - daily_labor: date, dept, hours, labor_cost
-- weekly_payroll: week_start, employee_name, dept, role, hourly_rate, regular_hours, overtime_hours, gross_pay
+- weekly_payroll: week_start, employee_name, dept, role, hourly_rate,
+  regular_hours, overtime_hours, gross_pay
 - expenses: date, category, vendor, amount, description
 - cash_flow: date, inflow, outflow, net
-- menu_items: name, category, price, cost, quantity_sold, total_revenue, gross_profit, margin_pct
-- payroll_journal_summaries: period_start/end, gross_earnings, net_pay, total_tax_liability
+- menu_items: name, category, price, cost, quantity_sold,
+  total_revenue, gross_profit, margin_pct
+- payroll_journal_summaries: period_start/end, gross_earnings, net_pay,
+  total_tax_liability
 """.strip()
 
 
@@ -87,7 +102,7 @@ def _md_to_html(text: str) -> str:
     return text
 
 
-async def _send_reply(update: Update, text: str):
+def _chunk(text: str) -> list[str]:
     paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
     chunks, current = [], ""
     for para in paragraphs:
@@ -98,7 +113,11 @@ async def _send_reply(update: Update, text: str):
             current = (current + "\n\n" + para).strip() if current else para
     if current:
         chunks.append(current.strip())
-    for chunk in chunks:
+    return chunks
+
+
+async def _send_reply(update: Update, text: str):
+    for chunk in _chunk(text):
         html = _md_to_html(chunk)
         try:
             await update.message.reply_text(html, parse_mode="HTML")
@@ -107,24 +126,38 @@ async def _send_reply(update: Update, text: str):
 
 
 async def _post_to_group(app, text: str):
+    """Post as CHET to the group."""
     if not GROUP_CHAT_ID:
         return
-    paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
-    chunks, current = [], ""
-    for para in paragraphs:
-        if len(current) + len(para) + 2 > 1000 and current:
-            chunks.append(current.strip())
-            current = para
-        else:
-            current = (current + "\n\n" + para).strip() if current else para
-    if current:
-        chunks.append(current.strip())
-    for chunk in chunks:
+    for chunk in _chunk(text):
         html = _md_to_html(chunk)
         try:
             await app.bot.send_message(GROUP_CHAT_ID, html, parse_mode="HTML")
         except Exception:
             await app.bot.send_message(GROUP_CHAT_ID, chunk)
+
+
+async def _post_as_bart(text: str):
+    """Post to the group using BART's bot token so the message comes from BART."""
+    if not BART_BOT_TOKEN or not GROUP_CHAT_ID:
+        return
+    for chunk in _chunk(text):
+        html = _md_to_html(chunk)
+        try:
+            _requests.post(
+                f"https://api.telegram.org/bot{BART_BOT_TOKEN}/sendMessage",
+                json={"chat_id": GROUP_CHAT_ID, "text": html, "parse_mode": "HTML"},
+                timeout=10,
+            )
+        except Exception:
+            try:
+                _requests.post(
+                    f"https://api.telegram.org/bot{BART_BOT_TOKEN}/sendMessage",
+                    json={"chat_id": GROUP_CHAT_ID, "text": chunk},
+                    timeout=10,
+                )
+            except Exception:
+                pass
 
 
 # ── GitHub helpers ────────────────────────────────────────────────────────────
@@ -181,14 +214,14 @@ def _chat_search(pattern: str) -> str:
     return "\n\n".join(lines)
 
 
-def _chat_execute_tool(name: str, inputs: dict) -> str:
+def _execute_tool(name: str, inputs: dict) -> str:
     if name == "read_file":   return _chat_read_file(inputs["path"])
     if name == "list_files":  return _chat_list_files(inputs.get("directory", ""))
     if name == "search_code": return _chat_search(inputs["pattern"])
     return f"Unknown tool: {name}"
 
 
-_CHAT_TOOLS = [
+_TOOLS = [
     {
         "name": "read_file",
         "description": "Read a file's full contents from the repository.",
@@ -218,43 +251,212 @@ _CHAT_TOOLS = [
     },
 ]
 
+# ── System prompts ────────────────────────────────────────────────────────────
 
-def _build_system(state: dict) -> str:
-    pending = state.get("last_recommendation") or "none"
-    return f"""You are CHET — Chief Accounting Expert for TableMetrics, a restaurant analytics SaaS platform.
+_CHET_DISCUSSION_SYSTEM = f"""You are CHET, a senior restaurant accountant and CFO advisor in a group discussion with BART (the developer) and the restaurant owner.
 
-You are a senior restaurant accountant and CFO advisor with 20+ years of experience. You think in terms of:
-- P&L management: food cost %, labor cost %, prime cost (target <60%), EBITDA, net profit margins
-- Cash flow: weekly position, burn rate, seasonal patterns, vendor payment timing
-- Menu engineering: contribution margin, star/plow-horse/puzzle/dog matrix, menu mix
-- Payroll: overtime exposure, labor law compliance, department cost ratios
-- Cost controls: variance analysis, purchase price vs standard cost, waste tracking
-- Tax and reporting: period close, accruals, QuickBooks reconciliation
+Your expertise: P&L management, food cost %, labor cost %, prime cost, cash flow forecasting, menu engineering, payroll compliance, variance analysis, QuickBooks reconciliation.
 
-You have READ-ONLY access to the dashboard codebase via GitHub API tools. Use them freely to understand what's built before answering questions.
-
-Repo: {GITHUB_REPO}
-Stack: Python, Streamlit, SQLAlchemy, PostgreSQL, Plotly, Pandas
-Pages: Summary, Spending (QuickBooks), Payroll (Paychex), Inventory, Sales, Reports, Account
+The dashboard (Python, Streamlit, PostgreSQL, Plotly) has these pages: Summary, Spending (QuickBooks), Payroll (Paychex), Inventory, Sales, Reports, Account.
 
 {_DB_SCHEMA}
 
-## Your role
-You are the accounting brain. You do NOT write code — that's BART's job.
-Your job is to:
-- Answer accounting and financial questions about the dashboard
-- Identify gaps from an accountant's perspective
-- Recommend specific features for BART to build
+You have read-only access to the codebase via tools. Read the relevant files before making suggestions so you know what's already built.
+
+## Your role in this discussion
+- Bring the accountant's perspective: what financial data is missing, what calculations would help restaurant owners catch problems early
+- Ask BART specific questions about feasibility
+- Keep each response to 2-3 concise paragraphs
+- Do NOT write code — that is BART's job
+- In your FINAL turn: state one clear, specific recommendation for BART to implement"""
+
+_BART_DISCUSSION_SYSTEM = f"""You are BART, a senior full-stack developer in a group discussion with CHET (the accountant) and the restaurant owner.
+
+You work on the TableMetrics restaurant dashboard (Python, Streamlit, SQLAlchemy, PostgreSQL, Plotly, Pandas).
+Pages: Summary, Spending (QuickBooks), Payroll (Paychex), Inventory, Sales, Reports, Account.
+
+{_DB_SCHEMA}
+
+You have read-only access to the codebase via tools. READ THE CODE before assessing what's built vs missing.
+
+## Your role in this discussion
+- Assess the feasibility of CHET's accounting suggestions
+- Tell CHET what's already built and what's genuinely missing
+- Propose specific implementation approaches (page name, chart type, calculation)
+- Ask CHET clarifying questions about the accounting requirements
+- Keep each response to 2-3 concise paragraphs
+- Be direct: say whether something is easy, hard, or already done"""
+
+
+def _build_discussion_messages(
+    speaker: str,
+    shared_history: list,
+    is_final_turn: bool,
+) -> list:
+    """Format the shared conversation history into a Claude messages array."""
+    labels = {"user": "Owner", "chet": "CHET", "bart": "BART"}
+
+    conv_lines = []
+    for msg in shared_history:
+        conv_lines.append(f"{labels[msg['speaker']]}: {msg['content']}")
+
+    conv_text = "\n\n".join(conv_lines)
+
+    final_note = ""
+    if is_final_turn and speaker == "chet":
+        final_note = (
+            "\n\nThis is your final turn. "
+            "Summarise what you and BART agreed on, then state ONE specific recommendation "
+            "starting with 'RECOMMENDATION:' — name the page, the metric, and the chart type."
+        )
+
+    return [
+        {
+            "role": "user",
+            "content": (
+                f"Conversation so far:\n\n{conv_text}"
+                f"{final_note}\n\n"
+                f"Your turn to respond:"
+            ),
+        }
+    ]
+
+
+# ── Discussion engine ─────────────────────────────────────────────────────────
+
+async def _run_discussion_turn(
+    speaker: str,
+    shared_history: list,
+    is_final_turn: bool,
+) -> str:
+    """Run one turn of the CHET↔BART discussion. Returns the agent's response text."""
+    system = _CHET_DISCUSSION_SYSTEM if speaker == "chet" else _BART_DISCUSSION_SYSTEM
+    messages = _build_discussion_messages(speaker, shared_history, is_final_turn)
+
+    client = anthropic.Anthropic(api_key=ANTHROPIC_KEY)
+    resp = None
+
+    def _serialize(block) -> dict:
+        if block.type == "text":
+            return {"type": "text", "text": block.text}
+        if block.type == "tool_use":
+            return {"type": "tool_use", "id": block.id, "name": block.name, "input": block.input}
+        return {"type": block.type}
+
+    for _ in range(15):
+        resp = client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=1024,
+            system=system,
+            tools=_TOOLS,
+            messages=messages,
+        )
+
+        if resp.stop_reason == "end_turn":
+            messages.append({"role": "assistant", "content": [_serialize(b) for b in resp.content]})
+            break
+
+        if resp.stop_reason == "tool_use":
+            messages.append({"role": "assistant", "content": [_serialize(b) for b in resp.content]})
+            results = []
+            for block in resp.content:
+                if block.type == "tool_use":
+                    out = _execute_tool(block.name, block.input)
+                    results.append({
+                        "type": "tool_result",
+                        "tool_use_id": block.id,
+                        "content": out[:8000],
+                    })
+            messages.append({"role": "user", "content": results})
+        else:
+            break
+
+    reply = ""
+    if resp:
+        for block in reversed(resp.content):
+            if hasattr(block, "text") and block.text.strip():
+                reply = block.text.strip()
+                break
+
+    return reply or f"({speaker.upper()} had nothing to add.)"
+
+
+async def orchestrate_group_discussion(app, user_message: str):
+    """
+    Run a CHET → BART → CHET discussion in the group chat.
+    CHET posts via its own account; BART posts via BART's bot token.
+    Saves CHET's final recommendation to shared state.
+    """
+    shared_history = [{"speaker": "user", "content": user_message}]
+
+    # ── Round 1: CHET opens ──────────────────────────────────────────────────
+    await app.bot.send_chat_action(GROUP_CHAT_ID, "typing")
+    chet_r1 = await asyncio.get_event_loop().run_in_executor(
+        None, lambda: asyncio.run(_run_discussion_turn("chet", shared_history, is_final_turn=False))
+    )
+    shared_history.append({"speaker": "chet", "content": chet_r1})
+    await _post_to_group(app, f"🧮 *CHET:*\n\n{chet_r1}")
+    await asyncio.sleep(2)
+
+    # ── Round 1: BART responds ───────────────────────────────────────────────
+    bart_r1 = await asyncio.get_event_loop().run_in_executor(
+        None, lambda: asyncio.run(_run_discussion_turn("bart", shared_history, is_final_turn=False))
+    )
+    shared_history.append({"speaker": "bart", "content": bart_r1})
+    await _post_as_bart(f"🤖 *BART:*\n\n{bart_r1}")
+    await asyncio.sleep(2)
+
+    # ── Round 2: CHET closes with recommendation ─────────────────────────────
+    await app.bot.send_chat_action(GROUP_CHAT_ID, "typing")
+    chet_r2 = await asyncio.get_event_loop().run_in_executor(
+        None, lambda: asyncio.run(_run_discussion_turn("chet", shared_history, is_final_turn=True))
+    )
+    shared_history.append({"speaker": "chet", "content": chet_r2})
+    await _post_to_group(app, f"🧮 *CHET:*\n\n{chet_r2}")
+
+    # ── Extract and save recommendation ──────────────────────────────────────
+    recommendation = ""
+    for line in chet_r2.splitlines():
+        if line.strip().upper().startswith("RECOMMENDATION:"):
+            recommendation = line.split(":", 1)[-1].strip()
+            break
+    if not recommendation:
+        paragraphs = [p.strip() for p in chet_r2.split("\n\n") if p.strip()]
+        recommendation = paragraphs[-1] if paragraphs else chet_r2[:300]
+
+    CHET_RECOMMENDATION_FILE.parent.mkdir(parents=True, exist_ok=True)
+    CHET_RECOMMENDATION_FILE.write_text(json.dumps({
+        "recommendation": recommendation,
+        "full_discussion": [m["speaker"] + ": " + m["content"] for m in shared_history],
+    }))
+
+    state = _load()
+    state["last_recommendation"] = recommendation
+    _save(state)
+
+    await _post_to_group(
+        app,
+        f"---\n📋 Recommendation saved. Tell *BART* to run */pickup* to implement it.",
+    )
+
+
+# ── System prompt for private CHET chat ──────────────────────────────────────
+def _build_chat_system(state: dict) -> str:
+    pending = state.get("last_recommendation") or "none"
+    return f"""You are CHET, a senior restaurant accountant and CFO advisor for TableMetrics, a restaurant analytics SaaS.
+
+Your expertise: P&L, food cost %, labor %, prime cost, cash flow, menu engineering, payroll, variance analysis, QuickBooks.
+
+Dashboard stack: Python, Streamlit, SQLAlchemy, PostgreSQL, Plotly, Pandas.
+Pages: Summary, Spending (QuickBooks), Payroll (Paychex), Inventory, Sales, Reports, Account.
+
+{_DB_SCHEMA}
+
+READ CODE via tools before answering questions about the dashboard. Never guess what's built.
 
 Current pending recommendation for BART: {pending}
-Use /recommend to send your latest recommendation to BART.
 
-## Response style
-- Be concise. Max 3-4 short paragraphs or a tight bullet list.
-- Use plain language, not formal documentation.
-- Think like a restaurant owner's accountant, not a software developer.
-- If asked about a specific page or metric, READ THE CODE FIRST before answering.
-- If suggesting an improvement, be specific: name the page, metric, and chart type."""
+Response style: concise, plain language, max 3-4 paragraphs. Think like a restaurant owner's accountant."""
 
 
 # ── History management ────────────────────────────────────────────────────────
@@ -286,25 +488,22 @@ async def _trim_history(client, history: list) -> list:
             messages=[{"role": "user", "content": "\n\n".join(text_parts)}],
         )
         summary = resp.content[0].text.strip()
-        condensed = [
+        return [
             {"role": "user", "content": f"[Earlier conversation summary]\n{summary}"},
             {"role": "assistant", "content": [{"type": "text", "text": "Got it, continuing with that context."}]},
-        ]
-        return condensed + keep
+        ] + keep
     except Exception:
         return keep
 
 
 # ── Command handlers ──────────────────────────────────────────────────────────
 async def cmd_analyze(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    """/analyze [topic] — deep accounting analysis of the dashboard with a recommendation for BART."""
+    """/analyze [topic] — deep accounting analysis + recommendation for BART."""
     if not _is_owner(update):
         return
-
     focus = " ".join(ctx.args) if ctx.args else None
     hint  = f" (focus: {focus})" if focus else ""
     await update.message.reply_text(f"🧮 Analyzing the dashboard{hint}… 1-2 minutes.")
-
     try:
         result = await asyncio.get_event_loop().run_in_executor(
             None,
@@ -316,16 +515,12 @@ async def cmd_analyze(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             ),
         )
         state = _load()
-        state["last_analysis"]      = result["full_analysis"]
+        state["last_analysis"]       = result["full_analysis"]
         state["last_recommendation"] = result["recommendation"]
         _save(state)
-
         await _send_reply(
             update,
-            f"🧮 *CHET Analysis:*\n\n"
-            f"{result['full_analysis']}\n\n"
-            f"---\n"
-            f"Run */recommend* to send this to BART.",
+            f"🧮 *CHET Analysis:*\n\n{result['full_analysis']}\n\n---\nRun */recommend* to send this to BART.",
         )
     except Exception as e:
         logger.exception("Analysis failed")
@@ -333,32 +528,25 @@ async def cmd_analyze(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 
 async def cmd_recommend(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    """/recommend — send current recommendation to BART via shared state and post to group."""
+    """/recommend — send current recommendation to BART via shared state."""
     if not _is_owner(update):
         return
-
     state = _load()
     rec = state.get("last_recommendation")
     if not rec:
-        await update.message.reply_text("No recommendation yet. Run /analyze first.")
+        await update.message.reply_text("No recommendation yet. Run /analyze first or have a group discussion.")
         return
-
-    # Write to shared file so BART can pick it up with /pickup
     CHET_RECOMMENDATION_FILE.parent.mkdir(parents=True, exist_ok=True)
     CHET_RECOMMENDATION_FILE.write_text(json.dumps({
         "recommendation": rec,
         "full_analysis": state.get("last_analysis", ""),
     }))
-
-    # Post to group so both bots and user can see it
     await _post_to_group(
         ctx.application,
         f"🧮 *CHET → BART:*\n\n{rec}\n\nBART: run */pickup* to implement this.",
     )
-
     await update.message.reply_text(
-        f"📤 Recommendation sent to BART:\n\n_{rec}_\n\n"
-        f"Tell BART to run /pickup to implement it.",
+        f"📤 Sent to BART:\n\n_{rec}_\n\nTell BART to run /pickup.",
         parse_mode="Markdown",
     )
 
@@ -367,7 +555,7 @@ async def cmd_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not _is_owner(update):
         return
     state = _load()
-    rec  = state.get("last_recommendation") or "none"
+    rec = state.get("last_recommendation") or "none"
     await update.message.reply_text(
         f"📋 *CHET Status*\n\nLast recommendation:\n_{rec}_",
         parse_mode="Markdown",
@@ -388,21 +576,26 @@ async def cmd_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
     await update.message.reply_text(
         "🧮 *CHET — Accounting Expert*\n\n"
-        "/analyze — deep accounting analysis + recommendation for BART\n"
+        "*Private chat:*\n"
+        "Just talk — ask me anything about restaurant finances or the dashboard\n"
+        "/analyze — deep analysis + recommendation for BART\n"
         "/analyze [topic] — same, focused on a specific area\n"
         "/recommend — send latest recommendation to BART\n"
         "/status — show current pending recommendation\n"
-        "/clearchat — clear conversation history\n"
-        "/help — this message\n\n"
-        "_Ask me anything about restaurant finances, P&L, cash flow, payroll, or the dashboard._",
+        "/clearchat — clear conversation history\n\n"
+        "*Group chat:*\n"
+        "Send any message → CHET and BART discuss it and produce a recommendation\n"
+        "Then tell BART /pickup to implement it",
         parse_mode="Markdown",
     )
 
 
-# ── Chat handler ──────────────────────────────────────────────────────────────
-async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+# ── Private chat handler ──────────────────────────────────────────────────────
+async def handle_private_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not _is_owner(update):
         return
+    if update.effective_chat.id == GROUP_CHAT_ID:
+        return  # handled separately
 
     state   = _load()
     history = state.get("chat_history", [])
@@ -413,7 +606,6 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     try:
         client = anthropic.Anthropic(api_key=ANTHROPIC_KEY)
         history = await _trim_history(client, history)
-
         resp = None
 
         def _serialize(block) -> dict:
@@ -427,27 +619,21 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             resp = client.messages.create(
                 model="claude-sonnet-4-6",
                 max_tokens=2048,
-                system=_build_system(state),
-                tools=_CHAT_TOOLS,
+                system=_build_chat_system(state),
+                tools=_TOOLS,
                 messages=history,
             )
-
             if resp.stop_reason == "end_turn":
                 history.append({"role": "assistant", "content": [_serialize(b) for b in resp.content]})
                 break
-
             if resp.stop_reason == "tool_use":
                 history.append({"role": "assistant", "content": [_serialize(b) for b in resp.content]})
                 await ctx.bot.send_chat_action(update.effective_chat.id, "typing")
                 results = []
                 for block in resp.content:
                     if block.type == "tool_use":
-                        out = _chat_execute_tool(block.name, block.input)
-                        results.append({
-                            "type": "tool_result",
-                            "tool_use_id": block.id,
-                            "content": out[:8000],
-                        })
+                        out = _execute_tool(block.name, block.input)
+                        results.append({"type": "tool_result", "tool_use_id": block.id, "content": out[:8000]})
                 history.append({"role": "user", "content": results})
             else:
                 break
@@ -468,61 +654,70 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ Error: {e}")
 
 
-async def handle_photo(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    """Handle a screenshot — passes it to Claude for accounting/UI feedback."""
+# ── Group chat handler ────────────────────────────────────────────────────────
+async def handle_group_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Triggered when the owner sends a message to the group — starts the discussion."""
     if not _is_owner(update):
         return
+    if not GROUP_CHAT_ID or update.effective_chat.id != GROUP_CHAT_ID:
+        return
 
-    await ctx.bot.send_chat_action(update.effective_chat.id, "typing")
+    user_message = update.message.text
+    if not user_message or user_message.startswith("/"):
+        return
+
+    await update.message.reply_text("🧮 Starting discussion between CHET and BART… (~2 min)")
 
     try:
-        photo    = update.message.photo[-1]
-        tg_file  = await ctx.bot.get_file(photo.file_id)
+        await orchestrate_group_discussion(ctx.application, user_message)
+    except Exception as e:
+        logger.exception("Group discussion failed")
+        await _post_to_group(ctx.application, f"❌ Discussion failed: {e}")
+
+
+# ── Photo handler ─────────────────────────────────────────────────────────────
+async def handle_photo(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not _is_owner(update):
+        return
+    await ctx.bot.send_chat_action(update.effective_chat.id, "typing")
+    try:
+        photo     = update.message.photo[-1]
+        tg_file   = await ctx.bot.get_file(photo.file_id)
         img_bytes = await tg_file.download_as_bytearray()
-        img_b64  = base64.b64encode(bytes(img_bytes)).decode()
-        caption  = update.message.caption or (
+        img_b64   = base64.b64encode(bytes(img_bytes)).decode()
+        caption   = update.message.caption or (
             "Review this screenshot from an accounting perspective. "
             "What financial data is shown? Is it clear and useful for a restaurant owner? "
-            "What's missing or could be improved?"
+            "What's missing?"
         )
-
         state   = _load()
         history = state.get("chat_history", [])
-
-        vision_messages = history + [
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "image",
-                        "source": {"type": "base64", "media_type": "image/jpeg", "data": img_b64},
-                    },
-                    {"type": "text", "text": caption},
-                ],
-            }
-        ]
-
-        client = anthropic.Anthropic(api_key=ANTHROPIC_KEY)
+        client  = anthropic.Anthropic(api_key=ANTHROPIC_KEY)
         resp = client.messages.create(
             model="claude-sonnet-4-6",
             max_tokens=2048,
-            system=_build_system(state),
-            tools=_CHAT_TOOLS,
-            messages=vision_messages,
+            system=_build_chat_system(state),
+            tools=_TOOLS,
+            messages=history + [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": img_b64}},
+                        {"type": "text", "text": caption},
+                    ],
+                }
+            ],
         )
-
         reply = "No response."
         for block in reversed(resp.content):
             if hasattr(block, "text") and block.text.strip():
                 reply = block.text.strip()
                 break
-
         history.append({"role": "user", "content": f"[Screenshot shared] {caption}"})
         history.append({"role": "assistant", "content": [{"type": "text", "text": reply}]})
         state["chat_history"] = history
         _save(state)
         await _send_reply(update, reply)
-
     except Exception as e:
         logger.exception("Photo handler failed")
         await update.message.reply_text(f"❌ Error: {e}")
@@ -542,7 +737,12 @@ def main():
     ]:
         app.add_handler(CommandHandler(cmd, handler))
 
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    # Group messages → discussion; private messages → Q&A chat
+    app.add_handler(MessageHandler(
+        filters.TEXT & ~filters.COMMAND & filters.Chat(GROUP_CHAT_ID) if GROUP_CHAT_ID else filters.NOTHING,
+        handle_group_message,
+    ))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_private_message))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
 
     logger.info("CHET started, polling…")
