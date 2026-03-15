@@ -164,12 +164,14 @@ if username == "test":
 
 The owner reviews your branch on the test account, then runs /deploy to release to all users.
 
-## Your task
-1. Read app.py and the most relevant page file(s) carefully — understand the existing code before changing anything
-2. Identify 1-2 specific, meaningful improvements: bugs, UX polish, data accuracy, missing insights, client-facing value
-3. Implement the changes — gate behind username == "test" unless it's a global bug fix
-4. Stage and commit: `git add -A && git commit -m "agent: <short description>"`
-5. End with a plain-English summary: what you changed, why it's valuable, which account to test on
+## Your task — follow these steps in order, no skipping
+1. list_files(".") to see the project structure
+2. Read the relevant page file(s) in full before touching anything
+3. Write the updated file immediately — do NOT describe what you plan to do, just do it
+4. Run: `git add -A && git commit -m "agent: <short description>"`
+5. After committing, write a 3-5 sentence plain-English summary of what changed and why
+
+IMPORTANT: Steps 3 and 4 are mandatory. If you haven't called write_file and git commit, you are not done.
 
 ## Rules
 - Change at most 2 files per run
