@@ -170,27 +170,22 @@ async def cmd_do(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     try:
         client = _anthropic.Anthropic(api_key=ANTHROPIC_KEY)
 
-        # Strip tool_use/tool_result pairs from history — keep only text turns.
-        # The extraction call doesn't need tool results, and passing them without
-        # tool definitions causes a 400 invalid_request_error.
+        # Build a text-only history for extraction — no tool_use or tool_result blocks.
+        # Any message that is purely tool calls (no text) is dropped entirely.
         clean_history = []
-        skip_next = False
         for msg in history:
-            if skip_next:
-                skip_next = False
-                continue
             content = msg["content"]
             if isinstance(content, str):
                 clean_history.append(msg)
             elif isinstance(content, list):
-                has_tool_use    = any(isinstance(b, dict) and b.get("type") == "tool_use"    for b in content)
-                has_tool_result = any(isinstance(b, dict) and b.get("type") == "tool_result" for b in content)
-                texts = [b["text"] for b in content if isinstance(b, dict) and b.get("type") == "text" and b.get("text", "").strip()]
-                if has_tool_result:
-                    continue  # drop tool_result user messages
-                if has_tool_use and not texts:
-                    skip_next = True  # pure tool_use with no text — drop it and its result
+                # Drop tool_result messages entirely
+                if any(isinstance(b, dict) and b.get("type") == "tool_result" for b in content):
                     continue
+                # Keep only text blocks — strip out any tool_use blocks
+                texts = [
+                    b["text"] for b in content
+                    if isinstance(b, dict) and b.get("type") == "text" and b.get("text", "").strip()
+                ]
                 if texts:
                     clean_history.append({"role": msg["role"], "content": "\n".join(texts)})
 
