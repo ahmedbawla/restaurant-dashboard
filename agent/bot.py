@@ -378,6 +378,81 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ Error: {e}")
 
 
+async def handle_photo(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Handle a screenshot sent by the owner — passes it to Claude as a vision input."""
+    if not _is_owner(update):
+        return
+
+    import anthropic as _anthropic
+
+    await ctx.bot.send_chat_action(update.effective_chat.id, "typing")
+
+    try:
+        # Download the highest-res version of the photo
+        photo = update.message.photo[-1]
+        tg_file = await ctx.bot.get_file(photo.file_id)
+        img_bytes = await tg_file.download_as_bytearray()
+        img_b64 = base64.b64encode(bytes(img_bytes)).decode()
+
+        caption = update.message.caption or "What do you think of this screenshot? Give detailed UI/UX feedback and suggest specific improvements."
+
+        state   = _load()
+        history = state.get("chat_history", [])
+
+        # Build a vision message — NOT saved to persistent history (too large)
+        vision_messages = history + [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": "image/jpeg",
+                            "data": img_b64,
+                        },
+                    },
+                    {"type": "text", "text": caption},
+                ],
+            }
+        ]
+
+        client = _anthropic.Anthropic(api_key=ANTHROPIC_KEY)
+        resp = client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=2048,
+            system=_DEV_SYSTEM,
+            tools=_CHAT_TOOLS,
+            messages=vision_messages,
+        )
+
+        reply = "No response."
+        for block in reversed(resp.content):
+            if hasattr(block, "text") and block.text.strip():
+                reply = block.text.strip()
+                break
+
+        if len(reply) > 4000:
+            reply = reply[:3997] + "…"
+
+        # Save a placeholder in history so context flows naturally
+        history.append({"role": "user", "content": f"[Screenshot shared] {caption}"})
+        history.append({"role": "assistant", "content": [b.model_dump() for b in resp.content]})
+        if len(history) > 40:
+            history = history[-40:]
+        state["chat_history"] = history
+        _save(state)
+
+        try:
+            await update.message.reply_text(reply, parse_mode="Markdown")
+        except Exception:
+            await update.message.reply_text(reply)
+
+    except Exception as e:
+        logger.exception("Photo handler failed")
+        await update.message.reply_text(f"❌ Error: {e}")
+
+
 async def cmd_clearchat(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not _is_owner(update):
         return
@@ -443,6 +518,7 @@ def main():
         app.add_handler(CommandHandler(cmd, handler))
 
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
 
     logger.info("Bot started, polling…")
     app.run_polling(drop_pending_updates=True)
