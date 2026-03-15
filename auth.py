@@ -22,6 +22,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 import streamlit as st
 
 from data import database as db
+from utils.sms import send_login_notification
 
 # ── Cookie helpers ─────────────────────────────────────────────────────────────
 _COOKIE_NAME    = "tm_session"
@@ -364,6 +365,7 @@ def _login():
     st.session_state.pop("_auth_screen", None)
     st.session_state["user"] = dict(user)
     _set_session_cookie(username)
+    send_login_notification(username, user.get("restaurant_name", ""), is_new_user=False)
     # Auto-sync QB data on login so users always see fresh data
     if user.get("qb_realm_id") and user.get("qb_refresh_token"):
         st.session_state["_trigger_qb_sync"] = True
@@ -421,6 +423,7 @@ def _register():
         st.session_state.pop("_auth_screen", None)
         st.session_state["user"] = dict(new_user)
         _set_session_cookie(username.strip())
+        send_login_notification(username.strip(), restaurant.strip(), is_new_user=True)
         st.rerun()
     except ValueError as exc:
         st.error(str(exc))
