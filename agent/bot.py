@@ -40,6 +40,7 @@ GITHUB_REPO   = os.environ.get("GITHUB_REPO", "ahmedbawla/restaurant-dashboard")
 GROUP_CHAT_ID = int(os.environ.get("TELEGRAM_GROUP_CHAT_ID", 0))
 
 STATE_FILE = Path("/data/agent_state.json")
+CHET_RECOMMENDATION_FILE = Path("/data/chet_recommendation.json")
 
 
 # ── State persistence ─────────────────────────────────────────────────────────
@@ -277,6 +278,62 @@ async def cmd_reject(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         state["last_branch"] = None
         _save(state)
         await update.message.reply_text(f"❌ Could not delete branch:\n{e}\n\nState cleared.")
+
+
+async def cmd_pickup(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """/pickup — pick up CHET's latest recommendation and implement it."""
+    if not _is_owner(update):
+        return
+
+    if not CHET_RECOMMENDATION_FILE.exists():
+        await update.message.reply_text("No recommendation from CHET yet. Ask CHET to run /recommend first.")
+        return
+
+    try:
+        data = json.loads(CHET_RECOMMENDATION_FILE.read_text())
+        rec  = data.get("recommendation", "").strip()
+    except Exception:
+        await update.message.reply_text("Could not read CHET's recommendation. Ask CHET to run /recommend again.")
+        return
+
+    if not rec:
+        await update.message.reply_text("CHET's recommendation is empty. Ask CHET to run /recommend again.")
+        return
+
+    await update.message.reply_text(
+        f"📥 Picked up CHET's recommendation:\n\n_{rec}_\n\n🤖 Implementing now… (2-5 min)",
+        parse_mode="Markdown",
+    )
+
+    try:
+        result = await asyncio.get_event_loop().run_in_executor(
+            None,
+            lambda: run_agent(
+                github_token=GITHUB_TOKEN,
+                github_repo=GITHUB_REPO,
+                anthropic_api_key=ANTHROPIC_KEY,
+                focus=rec,
+            ),
+        )
+        state = _load()
+        state["last_branch"]  = result["branch"]
+        state["last_summary"] = result["summary"]
+        state["last_files"]   = result.get("files", [])
+        _save(state)
+
+        # Clear CHET's recommendation so it isn't picked up twice
+        CHET_RECOMMENDATION_FILE.unlink(missing_ok=True)
+
+        await _send_reply(
+            update,
+            f"🤖 *BART:* Done!\n\n"
+            f"Branch: `{result['branch']}`\n\n"
+            f"{result['summary']}\n\n"
+            f"*/deploy* to push live · */reject* to discard",
+        )
+    except Exception as e:
+        logger.exception("BART failed on /pickup")
+        await update.message.reply_text(f"❌ Implementation failed:\n{e}")
 
 
 async def cmd_chet(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -529,9 +586,9 @@ async def cmd_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
     await update.message.reply_text(
         "🤖 *Dashboard Agent*\n\n"
-        "/chet — CHET analyzes the dashboard and recommends a feature\n"
-        "/chet [topic] — same, focused on a specific area\n"
-        "/approve — approve CHET's recommendation and hand it to BART\n"
+        "/pickup — implement CHET's latest recommendation\n"
+        "/chet — run CHET inline (single-bot mode)\n"
+        "/approve — approve inline CHET recommendation\n"
         "/do — implement whatever we just discussed in chat\n"
         "/do [hint] — same, with extra direction\n"
         "/run — trigger agent freely (uses /focus if set)\n"
@@ -1006,6 +1063,7 @@ def main():
     app = Application.builder().token(BOT_TOKEN).post_init(post_init).build()
 
     for cmd, handler in [
+        ("pickup",    cmd_pickup),
         ("chet",      cmd_chet),
         ("approve",   cmd_approve),
         ("run",       cmd_run),
