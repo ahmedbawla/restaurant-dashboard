@@ -328,7 +328,7 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     for _ in range(15):
         resp = client.messages.create(
-            model="claude-sonnet-4-5",
+            model="claude-sonnet-4-6",
             max_tokens=2048,
             system=_DEV_SYSTEM,
             tools=_CHAT_TOOLS,
