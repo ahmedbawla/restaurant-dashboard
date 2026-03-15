@@ -323,49 +323,59 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     await ctx.bot.send_chat_action(update.effective_chat.id, "typing")
 
-    client = _anthropic.Anthropic(api_key=ANTHROPIC_KEY)
-    resp   = None
+    try:
+        client = _anthropic.Anthropic(api_key=ANTHROPIC_KEY)
+        resp   = None
 
-    for _ in range(15):
-        resp = client.messages.create(
-            model="claude-sonnet-4-6",
-            max_tokens=2048,
-            system=_DEV_SYSTEM,
-            tools=_CHAT_TOOLS,
-            messages=history,
-        )
-        history.append({"role": "assistant", "content": resp.content})
+        for _ in range(15):
+            resp = client.messages.create(
+                model="claude-sonnet-4-6",
+                max_tokens=2048,
+                system=_DEV_SYSTEM,
+                tools=_CHAT_TOOLS,
+                messages=history,
+            )
+            history.append({"role": "assistant", "content": resp.content})
 
-        if resp.stop_reason == "end_turn":
-            break
-
-        if resp.stop_reason == "tool_use":
-            await ctx.bot.send_chat_action(update.effective_chat.id, "typing")
-            results = []
-            for block in resp.content:
-                if block.type == "tool_use":
-                    out = _chat_execute_tool(block.name, block.input)
-                    results.append({
-                        "type": "tool_result",
-                        "tool_use_id": block.id,
-                        "content": out[:8000],  # cap per tool result
-                    })
-            history.append({"role": "user", "content": results})
-
-    reply = "No response."
-    if resp:
-        for block in reversed(resp.content):
-            if hasattr(block, "text") and block.text.strip():
-                reply = block.text.strip()
+            if resp.stop_reason == "end_turn":
                 break
 
-    # Telegram message limit is 4096 chars
-    if len(reply) > 4000:
-        reply = reply[:3997] + "…"
+            if resp.stop_reason == "tool_use":
+                await ctx.bot.send_chat_action(update.effective_chat.id, "typing")
+                results = []
+                for block in resp.content:
+                    if block.type == "tool_use":
+                        out = _chat_execute_tool(block.name, block.input)
+                        results.append({
+                            "type": "tool_result",
+                            "tool_use_id": block.id,
+                            "content": out[:8000],
+                        })
+                history.append({"role": "user", "content": results})
 
-    state["chat_history"] = history
-    _save(state)
-    await update.message.reply_text(reply, parse_mode="Markdown")
+        reply = "No response."
+        if resp:
+            for block in reversed(resp.content):
+                if hasattr(block, "text") and block.text.strip():
+                    reply = block.text.strip()
+                    break
+
+        # Telegram message limit is 4096 chars
+        if len(reply) > 4000:
+            reply = reply[:3997] + "…"
+
+        state["chat_history"] = history
+        _save(state)
+
+        # Try Markdown first; fall back to plain text if Telegram rejects it
+        try:
+            await update.message.reply_text(reply, parse_mode="Markdown")
+        except Exception:
+            await update.message.reply_text(reply)
+
+    except Exception as e:
+        logger.exception("Chat handler failed")
+        await update.message.reply_text(f"❌ Error: {e}")
 
 
 async def cmd_clearchat(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
