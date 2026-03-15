@@ -233,7 +233,16 @@ async def nightly_run(app: Application):
 
 # ── Entry point ───────────────────────────────────────────────────────────────
 def main():
-    app = Application.builder().token(BOT_TOKEN).build()
+    async def post_init(application: Application):
+        scheduler = AsyncIOScheduler(timezone="UTC")
+        scheduler.add_job(
+            lambda: asyncio.create_task(nightly_run(application)),
+            "cron", hour=2, minute=0,
+        )
+        scheduler.start()
+        logger.info("Scheduler started")
+
+    app = Application.builder().token(BOT_TOKEN).post_init(post_init).build()
 
     for cmd, handler in [
         ("run",    cmd_run),
@@ -245,13 +254,6 @@ def main():
         ("start",  cmd_help),
     ]:
         app.add_handler(CommandHandler(cmd, handler))
-
-    scheduler = AsyncIOScheduler(timezone="UTC")
-    scheduler.add_job(
-        lambda: asyncio.create_task(nightly_run(app)),
-        "cron", hour=2, minute=0,
-    )
-    scheduler.start()
 
     logger.info("Bot started, polling…")
     app.run_polling(drop_pending_updates=True)
