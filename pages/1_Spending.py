@@ -9,6 +9,7 @@ from components.charts import expense_pie, top_vendors_bar, expense_trend_weekly
 from components.kpi_card import format_currency
 from components.theme import page_header, section_header
 from data import database as db
+from data.sync import sync_all as _sync_all
 from utils.oauth_quickbooks import is_configured as qb_secrets_configured
 
 username   = st.session_state["user"]["username"]
@@ -41,6 +42,8 @@ with _qb_col:
             "'>● QuickBooks Connected</span>",
             unsafe_allow_html=True,
         )
+        if st.button("🔄 Sync Now", key="qb_sync_now", use_container_width=True, type="primary"):
+            st.session_state["_qb_action"] = "sync"
         _rc1, _rc2 = st.columns(2)
         if _rc1.button("Reconnect", key="qb_reconnect", use_container_width=True):
             st.session_state["_qb_action"] = "reconnect"
@@ -76,6 +79,26 @@ if _qb_action == "disconnect":
     st.session_state["user"] = db.get_user(username)
     st.cache_data.clear()
     st.rerun()
+
+if _qb_action == "sync":
+    with st.spinner("Syncing QuickBooks data…"):
+        try:
+            _res = _sync_all(user)
+            _msgs = []
+            real_rows = 0
+            for _s, _r in (_res or {}).items():
+                if isinstance(_r, int):
+                    real_rows += _r
+                    if _r == 0:
+                        _msgs.append(f"{_s}: synced but returned 0 rows.")
+            if real_rows:
+                st.success(f"✅ Synced {real_rows} rows successfully.")
+            else:
+                st.warning("Sync completed — no new rows found. Try widening your date range in QuickBooks.")
+            st.cache_data.clear()
+            st.rerun()
+        except Exception as _sync_err:
+            st.error(f"Sync failed: {_sync_err}")
 
 if _qb_action in ("connect", "reconnect"):
     if qb_secrets_configured():
@@ -130,7 +153,7 @@ if expenses.empty:
     else:
         st.warning(
             "QuickBooks is connected but no expense data was found for the selected period. "
-            "Try clicking **Sync Now** in the sidebar or widening your date range."
+            "Try clicking **🔄 Sync Now** above or widening your date range."
         )
     st.stop()
 
