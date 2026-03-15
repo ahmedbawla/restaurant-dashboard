@@ -154,13 +154,92 @@ min_str, max_str = db.get_date_range(username)
 min_d = date.fromisoformat(min_str)
 max_d = date.fromisoformat(max_str)
 
+def _parse_date_query(text: str):
+    """Parse natural language into (start_date, end_date) or None."""
+    import re
+    import calendar as _cal
+
+    t = text.strip().lower()
+    today = date.today()
+
+    MONTHS = {
+        "january":1,"february":2,"march":3,"april":4,"may":5,"june":6,
+        "july":7,"august":8,"september":9,"october":10,"november":11,"december":12,
+        "jan":1,"feb":2,"mar":3,"apr":4,"jun":6,"jul":7,"aug":8,
+        "sep":9,"sept":9,"oct":10,"nov":11,"dec":12,
+    }
+
+    def _mrange(y, m):
+        return date(y, m, 1), date(y, m, _cal.monthrange(y, m)[1])
+
+    # relative shorthands
+    if "last month" in t:
+        prev = (today.replace(day=1) - timedelta(days=1))
+        return _mrange(prev.year, prev.month)
+    if "this month" in t or "current month" in t:
+        return _mrange(today.year, today.month)
+    if "last year" in t:
+        return date(today.year - 1, 1, 1), date(today.year - 1, 12, 31)
+    if "this year" in t or "current year" in t:
+        return date(today.year, 1, 1), today
+    if "last week" in t:
+        _end = today - timedelta(days=today.weekday() + 1)
+        return _end - timedelta(days=6), _end
+    if "this week" in t:
+        return today - timedelta(days=today.weekday()), today
+
+    # quarters: "q1 2025", "2025 q3", "first quarter 2025"
+    _qm = re.search(r"q([1-4])\s*[,\s]*(\d{4})", t) or re.search(r"(\d{4})\s*q([1-4])", t)
+    if _qm:
+        _g = _qm.groups()
+        _q, _y = (int(_g[0]), int(_g[1])) if len(_g[0]) == 1 else (int(_g[1]), int(_g[0]))
+        _sm, _em = (_q - 1) * 3 + 1, _q * 3
+        return date(_y, _sm, 1), date(_y, _em, _cal.monthrange(_y, _em)[1])
+    for _wrd, _qn in {"first":1,"second":2,"third":3,"fourth":4,"1st":1,"2nd":2,"3rd":3,"4th":4}.items():
+        if _wrd + " quarter" in t:
+            _ym = re.search(r"\b(\d{4})\b", t)
+            _y  = int(_ym.group(1)) if _ym else today.year
+            _sm, _em = (_qn - 1) * 3 + 1, _qn * 3
+            return date(_y, _sm, 1), date(_y, _em, _cal.monthrange(_y, _em)[1])
+
+    # ranges: "jan to march 2025", "from feb 2024 to apr 2025", "jan 2025 - mar 2025"
+    _rp = [
+        r"(?:from\s+)?(\w+)\s+(\d{4})\s+(?:to|through|until|-)\s+(\w+)\s+(\d{4})",
+        r"(?:from\s+)?(\w+)\s+to\s+(\w+)\s+(\d{4})",
+        r"(?:from\s+)?(\w+)\s*-\s*(\w+)\s+(\d{4})",
+    ]
+    for _pat in _rp:
+        _m = re.search(_pat, t)
+        if _m:
+            _g = _m.groups()
+            if len(_g) == 4 and _g[0] in MONTHS and _g[2] in MONTHS:
+                return date(int(_g[1]), MONTHS[_g[0]], 1), date(int(_g[3]), MONTHS[_g[2]], _cal.monthrange(int(_g[3]), MONTHS[_g[2]])[1])
+            if len(_g) == 3 and _g[0] in MONTHS and _g[1] in MONTHS:
+                _y = int(_g[2])
+                return date(_y, MONTHS[_g[0]], 1), date(_y, MONTHS[_g[1]], _cal.monthrange(_y, MONTHS[_g[1]])[1])
+
+    # single month + year: "february 2025", "feb of 2025"
+    for _name, _num in MONTHS.items():
+        if re.search(r"\b" + _name + r"\b", t):
+            _ym = re.search(r"\b(\d{4})\b", t)
+            _y  = int(_ym.group(1)) if _ym else today.year
+            return _mrange(_y, _num)
+
+    # year only: "2025", "in 2025"
+    _ym = re.search(r"\b(20\d{2}|19\d{2})\b", t)
+    if _ym:
+        _y = int(_ym.group(1))
+        return date(_y, 1, 1), date(_y, 12, 31)
+
+    return None
+
 with st.sidebar:
     st.divider()
     st.caption("ANALYSIS PERIOD")
 
     _view = st.selectbox(
         "View",
-        ["Weekly", "Monthly", "Current Quarter", "Last Quarter", "Annual", "Custom"],
+        ["Weekly", "Monthly", "Current Quarter", "Last Quarter", "Annual", "Custom", "Natural Language"],
         key="date_view_select",
     )
 
@@ -203,7 +282,7 @@ with st.sidebar:
         _start_d = _today - timedelta(days=365)
         _end_d   = _today
 
-    else:  # Custom
+    elif _view == "Custom":
         _default_start = max(min_d, max_d - timedelta(days=89))
         _picked = st.date_input(
             "Date Range",
@@ -216,6 +295,22 @@ with st.sidebar:
             _start_d, _end_d = _picked[0], _picked[1]
         else:
             _start_d, _end_d = _default_start, max_d
+
+    else:  # Natural Language
+        _nl_input = st.text_input(
+            "Describe a date range",
+            placeholder="e.g. february 2025, q1 2025, jan to march 2025…",
+            key="nl_date_input",
+        )
+        _nl_result = _parse_date_query(_nl_input) if _nl_input.strip() else None
+        if _nl_result:
+            _start_d, _end_d = _nl_result
+            st.caption(f"📅 {_start_d.strftime('%b %d, %Y')} → {_end_d.strftime('%b %d, %Y')}")
+        elif _nl_input.strip():
+            st.warning("Couldn't parse that. Try: *february 2025*, *q1 2025*, *jan to march 2025*, *last month*…")
+            _start_d, _end_d = max_d - timedelta(days=6), max_d
+        else:
+            _start_d, _end_d = max_d - timedelta(days=6), max_d
 
     if _view != "Custom":
         # Clamp to the range of data we actually have
