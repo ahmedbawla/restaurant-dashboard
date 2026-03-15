@@ -242,13 +242,13 @@ async def cmd_reject(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
     state = _load()
 
-    # If FINN has a pending recommendation (not yet sent to BART), reject that first
+    # If CHET has a pending recommendation (not yet sent to BART), reject that first
     if state.get("pending_recommendation"):
         state["pending_recommendation"] = None
         _save(state)
-        await _post_to_group(ctx.application, "🗑️ *FINN's recommendation discarded.*")
+        await _post_to_group(ctx.application, "🗑️ *CHET's recommendation discarded.*")
         if update.effective_chat.id != GROUP_CHAT_ID:
-            await update.message.reply_text("🗑️ FINN's recommendation discarded.")
+            await update.message.reply_text("🗑️ CHET's recommendation discarded.")
         return
 
     branch = state.get("last_branch")
@@ -282,13 +282,13 @@ async def cmd_reject(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 
 async def cmd_think(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    """/think [topic] — FINN analyzes the dashboard and posts recommendation to the group for approval."""
+    """/think [topic] — CHET analyzes the dashboard and posts recommendation to the group for approval."""
     if not _is_owner(update):
         return
 
     focus = " ".join(ctx.args) if ctx.args else None
     hint  = f" (focus: {focus})" if focus else ""
-    await update.message.reply_text(f"🧮 FINN is analyzing the dashboard{hint}… 1-2 minutes.")
+    await update.message.reply_text(f"🧮 CHET is analyzing the dashboard{hint}… 1-2 minutes.")
 
     try:
         result = await asyncio.get_event_loop().run_in_executor(
@@ -306,7 +306,7 @@ async def cmd_think(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         _save(state)
 
         msg = (
-            f"🧮 *FINN:*\n\n"
+            f"🧮 *CHET:*\n\n"
             f"{result['full_analysis']}\n\n"
             f"---\n"
             f"*/approve* — send this to BART to implement\n"
@@ -316,22 +316,22 @@ async def cmd_think(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
         # If called from private chat, confirm it was posted
         if update.effective_chat.id != GROUP_CHAT_ID:
-            await update.message.reply_text("🧮 FINN posted the analysis to the group.")
+            await update.message.reply_text("🧮 CHET posted the analysis to the group.")
 
     except Exception as e:
-        logger.exception("FINN failed")
-        await update.message.reply_text(f"❌ FINN failed:\n{e}")
+        logger.exception("CHET failed")
+        await update.message.reply_text(f"❌ CHET failed:\n{e}")
 
 
 async def cmd_approve(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    """/approve — approve FINN's recommendation and hand it to BART to implement."""
+    """/approve — approve CHET's recommendation and hand it to BART to implement."""
     if not _is_owner(update):
         return
 
     state = _load()
     rec = state.get("pending_recommendation")
     if not rec:
-        await update.message.reply_text("Nothing pending from FINN. Run /think first.")
+        await update.message.reply_text("Nothing pending from CHET. Run /think first.")
         return
 
     state["focus"]                  = rec
@@ -340,7 +340,7 @@ async def cmd_approve(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     await _post_to_group(
         ctx.application,
-        f"✅ *Approved!*\n\n🤖 *BART:* Got the brief from FINN. Implementing now… (2-5 min)",
+        f"✅ *Approved!*\n\n🤖 *BART:* Got the brief from CHET. Implementing now… (2-5 min)",
     )
 
     try:
@@ -539,9 +539,9 @@ async def cmd_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
     await update.message.reply_text(
         "🤖 *Dashboard Agent*\n\n"
-        "/think — FINN analyzes the dashboard and posts a recommendation\n"
+        "/think — CHET analyzes the dashboard and posts a recommendation\n"
         "/think [topic] — same, focused on a specific area\n"
-        "/approve — approve FINN's recommendation and hand it to BART\n"
+        "/approve — approve CHET's recommendation and hand it to BART\n"
         "/do — implement whatever we just discussed in chat\n"
         "/do [hint] — same, with extra direction\n"
         "/run — trigger agent freely (uses /focus if set)\n"
