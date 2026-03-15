@@ -380,12 +380,12 @@ def _build_discussion_messages(
 
 # ── Discussion engine ─────────────────────────────────────────────────────────
 
-async def _run_discussion_turn(
+def _run_discussion_turn_sync(
     speaker: str,
     shared_history: list,
     is_final_turn: bool,
 ) -> str:
-    """Run one turn of the CHET↔BART discussion. Returns the agent's response text."""
+    """Blocking Claude call for one discussion turn. Run via run_in_executor."""
     system = _CHET_DISCUSSION_SYSTEM if speaker == "chet" else _BART_DISCUSSION_SYSTEM
     messages = _build_discussion_messages(speaker, shared_history, is_final_turn)
 
@@ -407,22 +407,16 @@ async def _run_discussion_turn(
             tools=_TOOLS,
             messages=messages,
         )
-
         if resp.stop_reason == "end_turn":
             messages.append({"role": "assistant", "content": [_serialize(b) for b in resp.content]})
             break
-
         if resp.stop_reason == "tool_use":
             messages.append({"role": "assistant", "content": [_serialize(b) for b in resp.content]})
             results = []
             for block in resp.content:
                 if block.type == "tool_use":
                     out = _execute_tool(block.name, block.input)
-                    results.append({
-                        "type": "tool_result",
-                        "tool_use_id": block.id,
-                        "content": out[:8000],
-                    })
+                    results.append({"type": "tool_result", "tool_use_id": block.id, "content": out[:8000]})
             messages.append({"role": "user", "content": results})
         else:
             break
@@ -433,42 +427,70 @@ async def _run_discussion_turn(
             if hasattr(block, "text") and block.text.strip():
                 reply = block.text.strip()
                 break
-
     return reply or f"({speaker.upper()} had nothing to add.)"
 
 
-async def orchestrate_group_discussion(app, user_message: str):
+async def _run_discussion_turn(speaker: str, shared_history: list, is_final_turn: bool) -> str:
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(
+        None, _run_discussion_turn_sync, speaker, shared_history, is_final_turn
+    )
+
+
+async def orchestrate_group_discussion(app, user_message: str, chat_id: int):
     """
-    Run a CHET → BART → CHET discussion in the group chat.
-    CHET posts via its own account; BART posts via BART's bot token.
-    Saves CHET's final recommendation to shared state.
+    Run a CHET → BART → CHET discussion.
+    Posts to chat_id as CHET; uses BART's token for BART's turn.
+    Saves CHET's final recommendation to the shared DB.
     """
     shared_history = [{"speaker": "user", "content": user_message}]
 
+    async def _post_chet(text: str):
+        for chunk in _chunk(text):
+            html = _md_to_html(chunk)
+            try:
+                await app.bot.send_message(chat_id, html, parse_mode="HTML")
+            except Exception:
+                await app.bot.send_message(chat_id, chunk)
+
+    async def _post_bart(text: str):
+        if not BART_BOT_TOKEN:
+            await _post_chet(f"[BART] {text}")
+            return
+        for chunk in _chunk(text):
+            html = _md_to_html(chunk)
+            try:
+                _requests.post(
+                    f"https://api.telegram.org/bot{BART_BOT_TOKEN}/sendMessage",
+                    json={"chat_id": chat_id, "text": html, "parse_mode": "HTML"},
+                    timeout=10,
+                )
+            except Exception:
+                _requests.post(
+                    f"https://api.telegram.org/bot{BART_BOT_TOKEN}/sendMessage",
+                    json={"chat_id": chat_id, "text": chunk},
+                    timeout=10,
+                )
+
     # ── Round 1: CHET opens ──────────────────────────────────────────────────
-    await app.bot.send_chat_action(GROUP_CHAT_ID, "typing")
-    chet_r1 = await asyncio.get_event_loop().run_in_executor(
-        None, lambda: asyncio.run(_run_discussion_turn("chet", shared_history, is_final_turn=False))
-    )
+    await app.bot.send_chat_action(chat_id, "typing")
+    chet_r1 = await _run_discussion_turn("chet", shared_history, is_final_turn=False)
     shared_history.append({"speaker": "chet", "content": chet_r1})
-    await _post_to_group(app, f"🧮 *CHET:*\n\n{chet_r1}")
+    await _post_chet(f"🧮 *CHET:*\n\n{chet_r1}")
     await asyncio.sleep(2)
 
-    # ── Round 1: BART responds ───────────────────────────────────────────────
-    bart_r1 = await asyncio.get_event_loop().run_in_executor(
-        None, lambda: asyncio.run(_run_discussion_turn("bart", shared_history, is_final_turn=False))
-    )
+    # ── BART responds ────────────────────────────────────────────────────────
+    await app.bot.send_chat_action(chat_id, "typing")
+    bart_r1 = await _run_discussion_turn("bart", shared_history, is_final_turn=False)
     shared_history.append({"speaker": "bart", "content": bart_r1})
-    await _post_as_bart(f"🤖 *BART:*\n\n{bart_r1}")
+    await _post_bart(f"🤖 *BART:*\n\n{bart_r1}")
     await asyncio.sleep(2)
 
     # ── Round 2: CHET closes with recommendation ─────────────────────────────
-    await app.bot.send_chat_action(GROUP_CHAT_ID, "typing")
-    chet_r2 = await asyncio.get_event_loop().run_in_executor(
-        None, lambda: asyncio.run(_run_discussion_turn("chet", shared_history, is_final_turn=True))
-    )
+    await app.bot.send_chat_action(chat_id, "typing")
+    chet_r2 = await _run_discussion_turn("chet", shared_history, is_final_turn=True)
     shared_history.append({"speaker": "chet", "content": chet_r2})
-    await _post_to_group(app, f"🧮 *CHET:*\n\n{chet_r2}")
+    await _post_chet(f"🧮 *CHET:*\n\n{chet_r2}")
 
     # ── Extract and save recommendation ──────────────────────────────────────
     recommendation = ""
@@ -486,10 +508,7 @@ async def orchestrate_group_discussion(app, user_message: str):
     global _LAST_RECOMMENDATION
     _LAST_RECOMMENDATION = recommendation
 
-    await _post_to_group(
-        app,
-        f"---\n📋 Recommendation saved. Tell *BART* to run */pickup* to implement it.",
-    )
+    await _post_chet("📋 Recommendation saved. Tell *BART* to run */pickup* to implement it.")
 
 
 # ── System prompt for private CHET chat ──────────────────────────────────────
@@ -556,10 +575,10 @@ async def cmd_discuss(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not GROUP_CHAT_ID:
         await update.message.reply_text("TELEGRAM_GROUP_CHAT_ID is not set.")
         return
-    topic = " ".join(ctx.args) if ctx.args else (update.message.text or "accounting improvements")
+    topic = " ".join(ctx.args) if ctx.args else "What accounting features should we add to the dashboard?"
     await update.message.reply_text("🧮 Starting CHET ↔ BART discussion… (~2 min)")
     try:
-        await orchestrate_group_discussion(ctx.application, topic)
+        await orchestrate_group_discussion(ctx.application, topic, chat_id=update.effective_chat.id)
     except Exception as e:
         logger.exception("Group discussion failed")
         await update.message.reply_text(f"❌ Discussion failed: {e}")
