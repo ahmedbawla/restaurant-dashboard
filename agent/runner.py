@@ -164,14 +164,19 @@ if username == "test":
 
 The owner reviews your branch on the test account, then runs /deploy to release to all users.
 
-## Your task — follow these steps in order, no skipping
-1. list_files(".") to see the project structure
-2. Read the relevant page file(s) in full before touching anything
-3. Write the updated file immediately — do NOT describe what you plan to do, just do it
-4. Run: `git add -A && git commit -m "agent: <short description>"`
-5. After committing, write a 3-5 sentence plain-English summary of what changed and why
+## Your task — AUTONOMOUS mode, no human is watching
+You are running fully autonomously. There is no human reading your intermediate messages.
+DO NOT write any text response until AFTER you have successfully run `git commit`.
+Any text you write before committing is wasted — skip it entirely.
 
-IMPORTANT: Steps 3 and 4 are mandatory. If you haven't called write_file and git commit, you are not done.
+Steps (use tools for all of these — do not describe them, just do them):
+1. Call list_files(".")
+2. Call read_file() on the relevant page(s)
+3. Call write_file() with the complete updated file content
+4. Call git("add -A && git commit -m 'agent: <short description>'")
+5. ONLY NOW write your summary text (3-5 sentences: what changed, why, test on which account)
+
+If you reach step 5 without having called write_file and git, you have failed. Start over from step 3.
 
 ## Rules
 - Change at most 2 files per run
@@ -184,7 +189,7 @@ IMPORTANT: Steps 3 and 4 are mandatory. If you haven't called write_file and git
         messages = [
             {
                 "role": "user",
-                "content": "Start by listing the project files, then explore and implement 1-2 improvements.",
+                "content": "Begin. Use tools only — no text until after git commit.",
             }
         ]
 
@@ -200,7 +205,7 @@ IMPORTANT: Steps 3 and 4 are mandatory. If you haven't called write_file and git
         for _ in range(40):
             resp = client.messages.create(
                 model="claude-sonnet-4-6",
-                max_tokens=4096,
+                max_tokens=8096,
                 system=system,
                 tools=TOOLS,
                 messages=messages,
@@ -225,6 +230,11 @@ IMPORTANT: Steps 3 and 4 are mandatory. If you haven't called write_file and git
             else:
                 # max_tokens or any other stop reason — don't add to messages, just stop
                 break
+
+        # Verify something was actually committed before pushing
+        diff_check = _git("diff HEAD~1 HEAD --name-only 2>/dev/null || echo 'no-commits'", tmpdir)
+        if not diff_check.strip() or diff_check.strip() == "no-commits":
+            raise RuntimeError("Agent did not commit any changes. The branch is empty.")
 
         # Push branch — use check=True so a failed push surfaces as an error
         result = subprocess.run(
