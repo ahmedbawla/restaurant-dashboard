@@ -127,6 +127,111 @@ async def cmd_deploy(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ Deploy failed:\n{err[:500]}")
 
 
+async def cmd_promote(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """/promote — remove test gates from agent branch, then deploy to all users."""
+    if not _is_owner(update):
+        return
+
+    import anthropic as _anthropic
+
+    state  = _load()
+    branch = state.get("last_branch")
+    if not branch:
+        await update.message.reply_text("Nothing to promote. Run /run first.")
+        return
+
+    repo_url = f"https://x-access-token:{GITHUB_TOKEN}@github.com/{GITHUB_REPO}.git"
+    await update.message.reply_text(
+        f"🔓 Promoting `{branch}` — removing test gates…", parse_mode="Markdown"
+    )
+
+    def _do():
+        with tempfile.TemporaryDirectory() as tmpdir:
+            subprocess.run(["git", "clone", repo_url, tmpdir], check=True, capture_output=True)
+            subprocess.run("git config user.email 'agent@dashboard.bot'", shell=True, cwd=tmpdir)
+            subprocess.run("git config user.name 'Dashboard Agent'", shell=True, cwd=tmpdir)
+            subprocess.run(f"git fetch origin {branch}", shell=True, cwd=tmpdir, check=True)
+            subprocess.run(f"git checkout {branch}", shell=True, cwd=tmpdir, check=True, capture_output=True)
+
+            # Find files changed on this branch vs main
+            result = subprocess.run(
+                "git diff --name-only origin/main",
+                shell=True, cwd=tmpdir, capture_output=True, text=True,
+            )
+            changed = [f.strip() for f in result.stdout.splitlines() if f.strip().endswith(".py")]
+
+            if not changed:
+                raise RuntimeError("No changed Python files found on this branch.")
+
+            # Use Claude to remove test gates from each changed file
+            client = _anthropic.Anthropic(api_key=ANTHROPIC_KEY)
+            promoted_any = False
+
+            for filepath in changed:
+                full = Path(tmpdir) / filepath
+                if not full.exists():
+                    continue
+                original = full.read_text(encoding="utf-8")
+
+                # Skip if no test gate present
+                if 'username == "test"' not in original and "username == 'test'" not in original:
+                    continue
+
+                resp = client.messages.create(
+                    model="claude-sonnet-4-6",
+                    max_tokens=8096,
+                    system=(
+                        "You are a code editor. You will be given a Python file that has features "
+                        "gated behind `if username == \"test\":` blocks. "
+                        "Your job: remove the test gate conditionals so the features run for ALL users. "
+                        "Keep the feature code exactly as-is — just remove the `if username == \"test\":` "
+                        "wrapper and de-indent the block one level. "
+                        "Also remove any `username = st.session_state.get(\"username\", \"\")` lines "
+                        "that were only used for the test gate. "
+                        "Return ONLY the complete updated file content, no explanation, no markdown fences."
+                    ),
+                    messages=[{"role": "user", "content": f"File: {filepath}\n\n{original}"}],
+                )
+                promoted = resp.content[0].text if resp.content else None
+                if promoted and promoted.strip() != original.strip():
+                    full.write_text(promoted, encoding="utf-8")
+                    promoted_any = True
+
+            if not promoted_any:
+                raise RuntimeError("No test-gated code found in changed files — use /deploy instead.")
+
+            subprocess.run("git add -A", shell=True, cwd=tmpdir, check=True)
+            subprocess.run(
+                f"git commit -m 'promote: remove test gates from {branch}'",
+                shell=True, cwd=tmpdir, check=True, capture_output=True,
+            )
+
+            # Merge promoted branch into main
+            subprocess.run("git checkout main", shell=True, cwd=tmpdir, check=True, capture_output=True)
+            subprocess.run(
+                "git merge --no-ff HEAD@{1} -m 'Promote to all users'",
+                shell=True, cwd=tmpdir, check=True, capture_output=True,
+            )
+            result = subprocess.run(
+                "git push origin main",
+                shell=True, cwd=tmpdir, capture_output=True, text=True,
+            )
+            if result.returncode != 0:
+                raise RuntimeError(result.stderr.strip())
+
+    try:
+        await asyncio.get_event_loop().run_in_executor(None, _do)
+        state["last_branch"] = None
+        _save(state)
+        await update.message.reply_text(
+            "✅ Promoted! Test gates removed — feature is now live for all users.\n"
+            "Streamlit Cloud will redeploy automatically.",
+        )
+    except Exception as e:
+        err = str(e).replace(GITHUB_TOKEN, "***")
+        await update.message.reply_text(f"❌ Promote failed:\n{err[:500]}")
+
+
 async def cmd_reject(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not _is_owner(update):
         return
@@ -288,7 +393,8 @@ async def cmd_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         "/do — implement whatever we just discussed in chat\n"
         "/do [hint] — same, with extra direction\n"
         "/run — trigger agent freely (uses /focus if set)\n"
-        "/deploy — merge latest branch to main & go live\n"
+        "/deploy — deploy branch as-is (test-gated features stay test-only)\n"
+        "/promote — remove test gates & deploy to ALL users\n"
         "/reject — delete latest agent branch\n"
         "/status — show pending branch & last summary\n"
         "/focus [topic] — manually set what agent works on\n"
@@ -618,6 +724,7 @@ def main():
         ("run",       cmd_run),
         ("do",        cmd_do),
         ("deploy",    cmd_deploy),
+        ("promote",   cmd_promote),
         ("reject",    cmd_reject),
         ("focus",     cmd_focus),
         ("status",    cmd_status),
