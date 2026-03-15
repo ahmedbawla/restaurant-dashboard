@@ -51,6 +51,7 @@ def _load() -> dict:
 
 
 def _save(state: dict):
+    STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
     STATE_FILE.write_text(json.dumps(state))
 
 
