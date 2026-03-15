@@ -154,6 +154,75 @@ async def cmd_reject(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ Could not delete branch: {e}")
 
 
+async def cmd_do(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """/do [optional hint] — extract intent from chat history and run the coding agent."""
+    if not _is_owner(update):
+        return
+
+    import anthropic as _anthropic
+
+    state   = _load()
+    history = state.get("chat_history", [])
+    hint    = " ".join(ctx.args) if ctx.args else ""
+
+    # Ask Claude to distil the conversation into a single focused task
+    await update.message.reply_text("🧠 Extracting task from our conversation…")
+    try:
+        client = _anthropic.Anthropic(api_key=ANTHROPIC_KEY)
+        extraction_prompt = (
+            "Based on the conversation so far, write ONE concise sentence describing "
+            "the single most specific code change to implement next. "
+            "Start with a verb. Max 20 words. No preamble.\n"
+            + (f"Extra hint from owner: {hint}" if hint else "")
+        )
+        summary_resp = client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=100,
+            system="You extract clear, actionable task descriptions from developer conversations.",
+            messages=history + [{"role": "user", "content": extraction_prompt}],
+        )
+        focus = ""
+        for block in summary_resp.content:
+            if hasattr(block, "text") and block.text.strip():
+                focus = block.text.strip()
+                break
+    except Exception as e:
+        await update.message.reply_text(f"❌ Could not extract task: {e}")
+        return
+
+    if not focus:
+        await update.message.reply_text("❌ Couldn't determine what to implement. Try /focus [description] then /run.")
+        return
+
+    await update.message.reply_text(
+        f"🎯 Task: *{focus}*\n\n🤖 Agent starting… this takes 2–5 minutes.",
+        parse_mode="Markdown",
+    )
+
+    try:
+        result = await asyncio.get_event_loop().run_in_executor(
+            None,
+            lambda: run_agent(
+                github_token=GITHUB_TOKEN,
+                github_repo=GITHUB_REPO,
+                anthropic_api_key=ANTHROPIC_KEY,
+                focus=focus,
+            ),
+        )
+        state["last_branch"]  = result["branch"]
+        state["last_summary"] = result["summary"]
+        state["focus"]        = None
+        _save(state)
+        await _send_reply(update,
+            f"✅ Done!\n\nBranch: `{result['branch']}`\n\n"
+            f"{result['summary']}\n\n"
+            f"/deploy to push live · /reject to discard"
+        )
+    except Exception as e:
+        logger.exception("Agent run failed in /do")
+        await update.message.reply_text(f"❌ Agent failed:\n{e}")
+
+
 async def cmd_focus(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not _is_owner(update):
         return
@@ -189,12 +258,14 @@ async def cmd_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
     await update.message.reply_text(
         "🤖 *Dashboard Agent*\n\n"
-        "/run — trigger agent now\n"
-        "/deploy — merge latest changes to main & go live\n"
+        "/do — implement whatever we just discussed in chat\n"
+        "/do [hint] — same, with extra direction\n"
+        "/run — trigger agent freely (uses /focus if set)\n"
+        "/deploy — merge latest branch to main & go live\n"
         "/reject — delete latest agent branch\n"
         "/status — show pending branch & last summary\n"
-        "/focus [topic] — set what agent works on next\n"
-        "  e.g. `/focus improve the payroll charts`\n"
+        "/focus [topic] — manually set what agent works on\n"
+        "/clearchat — clear conversation history\n"
         "/help — this message\n\n"
         "_Runs automatically every night at 2 AM UTC_",
         parse_mode="Markdown",
@@ -507,13 +578,14 @@ def main():
     app = Application.builder().token(BOT_TOKEN).post_init(post_init).build()
 
     for cmd, handler in [
-        ("run",    cmd_run),
-        ("deploy", cmd_deploy),
-        ("reject", cmd_reject),
-        ("focus",  cmd_focus),
-        ("status", cmd_status),
-        ("help",   cmd_help),
-        ("start",    cmd_help),
+        ("run",       cmd_run),
+        ("do",        cmd_do),
+        ("deploy",    cmd_deploy),
+        ("reject",    cmd_reject),
+        ("focus",     cmd_focus),
+        ("status",    cmd_status),
+        ("help",      cmd_help),
+        ("start",     cmd_help),
         ("clearchat", cmd_clearchat),
     ]:
         app.add_handler(CommandHandler(cmd, handler))
