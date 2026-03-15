@@ -58,7 +58,7 @@ def _save(state: dict):
 
 
 def _is_owner(update: Update) -> bool:
-    return update.effective_chat.id == OWNER_CHAT_ID
+    return update.effective_user.id == OWNER_CHAT_ID
 
 
 # ── Command handlers ──────────────────────────────────────────────────────────
