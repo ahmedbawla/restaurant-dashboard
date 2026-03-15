@@ -224,8 +224,14 @@ The owner reviews your branch on the test account, then runs /deploy to release 
                 # max_tokens or any other stop reason — don't add to messages, just stop
                 break
 
-        # Push branch
-        _git(f"push origin {branch}", tmpdir)
+        # Push branch — use check=True so a failed push surfaces as an error
+        result = subprocess.run(
+            f"git push origin {branch}",
+            shell=True, cwd=tmpdir,
+            capture_output=True, text=True, timeout=60,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(f"git push failed:\n{result.stderr.strip()}")
 
         # Extract summary from final message
         summary = "Agent completed — no summary provided."
