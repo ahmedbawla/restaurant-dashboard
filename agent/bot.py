@@ -201,49 +201,171 @@ async def cmd_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     )
 
 
-# ── Chat handler ─────────────────────────────────────────────────────────────
-_CHAT_SYSTEM = """You are an AI assistant for a restaurant owner who uses the TableMetrics dashboard.
-The dashboard has these sections: Sales & Revenue, Payroll (Paychex), Spending & Expenses (QuickBooks), Inventory, and Reports.
+# ── Developer chat handler ────────────────────────────────────────────────────
+import base64
+import requests as _requests
 
-Help the owner:
-- Understand their restaurant metrics and what they mean
-- Make business decisions (staffing, pricing, cost control)
-- Interpret numbers they paste or describe to you
-- Answer general restaurant management questions
+_DEV_SYSTEM = f"""You are a senior full-stack developer and the primary expert on this Streamlit restaurant dashboard codebase (repo: {GITHUB_REPO}).
 
-Be concise and practical. You don't have live access to their database, but they can paste numbers and you'll analyze them.
-If they ask you to make a code change or improvement, tell them to use /focus followed by /run instead."""
+When answering questions, READ THE ACTUAL CODE using your tools before responding — never guess at implementation details.
+You have read-only access to the repository via the GitHub API.
+
+The app is built with: Python, Streamlit, SQLAlchemy, Supabase/PostgreSQL, Plotly, Pandas.
+Pages: Summary, Spending (QuickBooks OAuth), Payroll (Paychex PDF/CSV), Inventory, Sales, Reports, Account.
+There is also an autonomous coding agent in the agent/ directory (that's you).
+
+Help the developer:
+- Debug issues by reading the relevant code
+- Explain how specific features are implemented
+- Suggest improvements with specific code references
+- Understand data flow and architecture
+- Review recent changes (use git log/diff via list_files on .git or read CHANGELOG)
+
+Be precise — cite file names and line numbers when relevant.
+Keep answers concise but technically complete.
+If asked to make a change, explain exactly what to edit and where, or suggest using /focus + /run."""
+
+_CHAT_TOOLS = [
+    {
+        "name": "read_file",
+        "description": "Read a file's full contents from the repository.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "File path relative to repo root, e.g. 'pages/2_Payroll.py'"},
+            },
+            "required": ["path"],
+        },
+    },
+    {
+        "name": "list_files",
+        "description": "List all files in the repo or a subdirectory.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "directory": {"type": "string", "description": "Subdirectory to filter by, or '' for all files"},
+            },
+            "required": ["directory"],
+        },
+    },
+    {
+        "name": "search_code",
+        "description": "Search for a text pattern across all files in the repo.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "pattern": {"type": "string", "description": "Text or regex pattern to search for"},
+            },
+            "required": ["pattern"],
+        },
+    },
+]
+
+def _gh_headers():
+    return {"Authorization": f"token {GITHUB_TOKEN}", "Accept": "application/vnd.github.v3+json"}
+
+def _chat_read_file(path: str) -> str:
+    url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{path}"
+    resp = _requests.get(url, headers=_gh_headers(), timeout=15)
+    if resp.status_code != 200:
+        return f"Error {resp.status_code}: {resp.json().get('message', 'not found')}"
+    data = resp.json()
+    if isinstance(data, list):
+        return "That path is a directory. Use list_files instead."
+    content = data.get("content", "")
+    if data.get("encoding") == "base64":
+        return base64.b64decode(content).decode("utf-8", errors="replace")
+    return content
+
+def _chat_list_files(directory: str) -> str:
+    url = f"https://api.github.com/repos/{GITHUB_REPO}/git/trees/HEAD?recursive=1"
+    resp = _requests.get(url, headers=_gh_headers(), timeout=15)
+    if resp.status_code != 200:
+        return f"Error fetching file tree: {resp.status_code}"
+    files = [
+        item["path"] for item in resp.json().get("tree", [])
+        if item["type"] == "blob" and (not directory or item["path"].startswith(directory))
+        and not any(p.startswith((".", "__pycache__")) for p in item["path"].split("/"))
+    ]
+    return "\n".join(files[:200])
+
+def _chat_search(pattern: str) -> str:
+    url = f"https://api.github.com/search/code?q={_requests.utils.quote(pattern)}+repo:{GITHUB_REPO}"
+    resp = _requests.get(url, headers=_gh_headers(), timeout=15)
+    if resp.status_code != 200:
+        return f"Search error {resp.status_code}"
+    items = resp.json().get("items", [])
+    if not items:
+        return "No matches found."
+    lines = []
+    for item in items[:10]:
+        frags = [m.get("fragment", "") for m in item.get("text_matches", [])]
+        lines.append(f"**{item['path']}**\n" + "\n".join(f"  …{f.strip()}…" for f in frags[:2]))
+    return "\n\n".join(lines)
+
+def _chat_execute_tool(name: str, inputs: dict) -> str:
+    if name == "read_file":   return _chat_read_file(inputs["path"])
+    if name == "list_files":  return _chat_list_files(inputs.get("directory", ""))
+    if name == "search_code": return _chat_search(inputs["pattern"])
+    return f"Unknown tool: {name}"
 
 async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not _is_owner(update):
         return
 
-    state = _load()
+    import anthropic as _anthropic
+
+    state   = _load()
     history = state.get("chat_history", [])
-    user_text = update.message.text
+    history.append({"role": "user", "content": update.message.text})
+    if len(history) > 40:
+        history = history[-40:]
 
     await ctx.bot.send_chat_action(update.effective_chat.id, "typing")
 
-    history.append({"role": "user", "content": user_text})
-    # Keep last 30 messages to stay within token limits
-    if len(history) > 30:
-        history = history[-30:]
-
-    import anthropic as _anthropic
     client = _anthropic.Anthropic(api_key=ANTHROPIC_KEY)
-    resp = client.messages.create(
-        model="claude-sonnet-4-5",
-        max_tokens=1024,
-        system=_CHAT_SYSTEM,
-        messages=history,
-    )
-    reply = resp.content[0].text
+    resp   = None
 
-    history.append({"role": "assistant", "content": reply})
+    for _ in range(15):
+        resp = client.messages.create(
+            model="claude-sonnet-4-5",
+            max_tokens=2048,
+            system=_DEV_SYSTEM,
+            tools=_CHAT_TOOLS,
+            messages=history,
+        )
+        history.append({"role": "assistant", "content": resp.content})
+
+        if resp.stop_reason == "end_turn":
+            break
+
+        if resp.stop_reason == "tool_use":
+            await ctx.bot.send_chat_action(update.effective_chat.id, "typing")
+            results = []
+            for block in resp.content:
+                if block.type == "tool_use":
+                    out = _chat_execute_tool(block.name, block.input)
+                    results.append({
+                        "type": "tool_result",
+                        "tool_use_id": block.id,
+                        "content": out[:8000],  # cap per tool result
+                    })
+            history.append({"role": "user", "content": results})
+
+    reply = "No response."
+    if resp:
+        for block in reversed(resp.content):
+            if hasattr(block, "text") and block.text.strip():
+                reply = block.text.strip()
+                break
+
+    # Telegram message limit is 4096 chars
+    if len(reply) > 4000:
+        reply = reply[:3997] + "…"
+
     state["chat_history"] = history
     _save(state)
-
-    await update.message.reply_text(reply)
+    await update.message.reply_text(reply, parse_mode="Markdown")
 
 
 async def cmd_clearchat(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
