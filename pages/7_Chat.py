@@ -135,23 +135,28 @@ if prompt := st.chat_input("Ask about your data…"):
     with st.chat_message("user"):
         st.markdown(prompt)
 
-    from openai import OpenAI as _OpenAI
-    _client = _OpenAI(api_key=_api_key, base_url="https://api.minimaxi.chat/v1")
-    _stream = _client.chat.completions.create(
-        model="MiniMax-Text-01",
-        max_tokens=1024,
-        messages=[{"role": "system", "content": _system}]
-                 + st.session_state["chat_messages"],
-        stream=True,
-    )
-
-    def _token_gen():
-        for _chunk in _stream:
-            _delta = _chunk.choices[0].delta.content
-            if _delta:
-                yield _delta
+    import requests as _requests
 
     with st.chat_message("assistant"):
-        _response = st.write_stream(_token_gen())
+        with st.spinner("Thinking…"):
+            _resp = _requests.post(
+                "https://api.minimaxi.chat/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {_api_key}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": "MiniMax-Text-01",
+                    "max_tokens": 1024,
+                    "messages": [{"role": "system", "content": _system}]
+                               + st.session_state["chat_messages"],
+                },
+                timeout=60,
+            )
+        if _resp.status_code != 200:
+            st.error(f"MiniMax API error {_resp.status_code}: {_resp.text}")
+            st.stop()
+        _response = _resp.json()["choices"][0]["message"]["content"]
+        st.markdown(_response)
 
     st.session_state["chat_messages"].append({"role": "assistant", "content": _response})
