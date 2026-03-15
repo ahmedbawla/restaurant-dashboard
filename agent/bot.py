@@ -77,6 +77,7 @@ async def cmd_run(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         )
         state["last_branch"]  = result["branch"]
         state["last_summary"] = result["summary"]
+        state["last_files"]   = result.get("files", [])
         _save(state)
         await update.message.reply_text(
             f"✅ *Done!*\n\nBranch: `{result['branch']}`\n\n"
@@ -128,52 +129,39 @@ async def cmd_deploy(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 
 async def cmd_promote(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    """/promote — remove test gates from agent branch, then deploy to all users."""
+    """/promote — remove test gates from last agent changes and deploy to all users.
+    Works whether or not /deploy was already called."""
     if not _is_owner(update):
         return
 
     import anthropic as _anthropic
 
-    state  = _load()
-    branch = state.get("last_branch")
-    if not branch:
-        await update.message.reply_text("Nothing to promote. Run /run first.")
+    state = _load()
+    files = state.get("last_files", [])
+    if not files:
+        await update.message.reply_text(
+            "Nothing to promote — no recent agent run found.\n"
+            "Run /run or /do first, then /promote when ready."
+        )
         return
 
     repo_url = f"https://x-access-token:{GITHUB_TOKEN}@github.com/{GITHUB_REPO}.git"
-    await update.message.reply_text(
-        f"🔓 Promoting `{branch}` — removing test gates…", parse_mode="Markdown"
-    )
+    await update.message.reply_text("🔓 Removing test gates and deploying to all users…")
 
     def _do():
         with tempfile.TemporaryDirectory() as tmpdir:
             subprocess.run(["git", "clone", repo_url, tmpdir], check=True, capture_output=True)
             subprocess.run("git config user.email 'agent@dashboard.bot'", shell=True, cwd=tmpdir)
             subprocess.run("git config user.name 'Dashboard Agent'", shell=True, cwd=tmpdir)
-            subprocess.run(f"git fetch origin {branch}", shell=True, cwd=tmpdir, check=True)
-            subprocess.run(f"git checkout {branch}", shell=True, cwd=tmpdir, check=True, capture_output=True)
 
-            # Find files changed on this branch vs main
-            result = subprocess.run(
-                "git diff --name-only origin/main",
-                shell=True, cwd=tmpdir, capture_output=True, text=True,
-            )
-            changed = [f.strip() for f in result.stdout.splitlines() if f.strip().endswith(".py")]
-
-            if not changed:
-                raise RuntimeError("No changed Python files found on this branch.")
-
-            # Use Claude to remove test gates from each changed file
             client = _anthropic.Anthropic(api_key=ANTHROPIC_KEY)
             promoted_any = False
 
-            for filepath in changed:
+            for filepath in files:
                 full = Path(tmpdir) / filepath
                 if not full.exists():
                     continue
                 original = full.read_text(encoding="utf-8")
-
-                # Skip if no test gate present
                 if 'username == "test"' not in original and "username == 'test'" not in original:
                     continue
 
@@ -181,35 +169,29 @@ async def cmd_promote(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                     model="claude-sonnet-4-6",
                     max_tokens=8096,
                     system=(
-                        "You are a code editor. You will be given a Python file that has features "
-                        "gated behind `if username == \"test\":` blocks. "
-                        "Your job: remove the test gate conditionals so the features run for ALL users. "
-                        "Keep the feature code exactly as-is — just remove the `if username == \"test\":` "
-                        "wrapper and de-indent the block one level. "
-                        "Also remove any `username = st.session_state.get(\"username\", \"\")` lines "
-                        "that were only used for the test gate. "
-                        "Return ONLY the complete updated file content, no explanation, no markdown fences."
+                        "You are a code editor. Remove all `if username == \"test\":` gate wrappers "
+                        "from the file so the enclosed features run for ALL users. "
+                        "De-indent the gated code by one level. "
+                        "Remove any `username = st.session_state.get(\"username\", \"\")` lines that "
+                        "only existed to support the test gate. "
+                        "Return ONLY the complete updated file, no explanation, no markdown fences."
                     ),
                     messages=[{"role": "user", "content": f"File: {filepath}\n\n{original}"}],
                 )
-                promoted = resp.content[0].text if resp.content else None
-                if promoted and promoted.strip() != original.strip():
+                promoted = resp.content[0].text.strip() if resp.content else None
+                if promoted and promoted != original.strip():
                     full.write_text(promoted, encoding="utf-8")
                     promoted_any = True
 
             if not promoted_any:
-                raise RuntimeError("No test-gated code found in changed files — use /deploy instead.")
+                raise RuntimeError(
+                    "No test-gated code found in the changed files.\n"
+                    "If you already promoted once, the gates are already removed."
+                )
 
             subprocess.run("git add -A", shell=True, cwd=tmpdir, check=True)
             subprocess.run(
-                f"git commit -m 'promote: remove test gates from {branch}'",
-                shell=True, cwd=tmpdir, check=True, capture_output=True,
-            )
-
-            # Merge promoted branch into main
-            subprocess.run("git checkout main", shell=True, cwd=tmpdir, check=True, capture_output=True)
-            subprocess.run(
-                "git merge --no-ff HEAD@{1} -m 'Promote to all users'",
+                "git commit -m 'promote: remove test gates — release to all users'",
                 shell=True, cwd=tmpdir, check=True, capture_output=True,
             )
             result = subprocess.run(
@@ -217,10 +199,11 @@ async def cmd_promote(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 shell=True, cwd=tmpdir, capture_output=True, text=True,
             )
             if result.returncode != 0:
-                raise RuntimeError(result.stderr.strip())
+                raise RuntimeError(result.stderr.strip().replace(GITHUB_TOKEN, "***"))
 
     try:
         await asyncio.get_event_loop().run_in_executor(None, _do)
+        state["last_files"] = []
         state["last_branch"] = None
         _save(state)
         await update.message.reply_text(
@@ -343,6 +326,7 @@ async def cmd_do(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         )
         state["last_branch"]  = result["branch"]
         state["last_summary"] = result["summary"]
+        state["last_files"]   = result.get("files", [])
         state["focus"]        = None
         _save(state)
         await _send_reply(update,
@@ -693,6 +677,7 @@ async def nightly_run(app: Application):
         )
         state["last_branch"]  = result["branch"]
         state["last_summary"] = result["summary"]
+        state["last_files"]   = result.get("files", [])
         _save(state)
         await app.bot.send_message(
             OWNER_CHAT_ID,

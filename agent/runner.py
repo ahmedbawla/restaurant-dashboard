@@ -253,4 +253,10 @@ If you reach step 5 without having called write_file and git, you have failed. S
                     summary = block.text.strip()
                     break
 
-        return {"branch": branch, "summary": summary}
+        # Record which files were changed so /promote knows what to operate on
+        changed_files = [
+            f.strip() for f in diff_check.splitlines()
+            if f.strip() and f.strip().endswith(".py")
+        ]
+
+        return {"branch": branch, "summary": summary, "files": changed_files}
