@@ -374,7 +374,6 @@ _pages = [
     st.Page("pages/5_Reports.py",    title="Reports",          icon="📄"),
     st.Page("pages/6_Account.py",    title="Account Settings", icon="⚙️"),
 ]
-if username == "test":
-    _pages.append(st.Page("pages/7_Chat.py", title="AI Assistant", icon="🤖"))
+# AI Assistant page (pages/7_Chat.py) exists but is not exposed in nav yet
 pg = st.navigation(_pages)
 pg.run()
