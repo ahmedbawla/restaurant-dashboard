@@ -24,6 +24,8 @@ import re as _re_msg
 from pathlib import Path
 
 import anthropic
+import psycopg2
+import psycopg2.extras
 import requests as _requests
 from telegram import Update
 from telegram.ext import (
@@ -43,16 +45,18 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # ── Config ────────────────────────────────────────────────────────────────────
-BOT_TOKEN     = os.environ["CHET_BOT_TOKEN"]
+BOT_TOKEN      = os.environ["CHET_BOT_TOKEN"]
 BART_BOT_TOKEN = os.environ.get("BART_BOT_TOKEN", "")
-OWNER_CHAT_ID = int(os.environ["TELEGRAM_CHAT_ID"])
-ANTHROPIC_KEY = os.environ["ANTHROPIC_API_KEY"]
-GITHUB_TOKEN  = os.environ["GITHUB_TOKEN"]
-GITHUB_REPO   = os.environ.get("GITHUB_REPO", "ahmedbawla/restaurant-dashboard")
-GROUP_CHAT_ID = int(os.environ.get("TELEGRAM_GROUP_CHAT_ID", 0))
+OWNER_CHAT_ID  = int(os.environ["TELEGRAM_CHAT_ID"])
+ANTHROPIC_KEY  = os.environ["ANTHROPIC_API_KEY"]
+GITHUB_TOKEN   = os.environ["GITHUB_TOKEN"]
+DATABASE_URL   = os.environ.get("DATABASE_URL", "")
+GITHUB_REPO    = os.environ.get("GITHUB_REPO", "ahmedbawla/restaurant-dashboard")
+GROUP_CHAT_ID  = int(os.environ.get("TELEGRAM_GROUP_CHAT_ID", 0))
 
-CHET_STATE_FILE          = Path("/data/chet_state.json")
-CHET_RECOMMENDATION_FILE = Path("/data/chet_recommendation.json")
+# In-memory chat history (resets on redeploy — acceptable for a chat assistant)
+_CHAT_HISTORY: list = []
+_LAST_RECOMMENDATION: str = ""
 
 _DB_SCHEMA = """
 Database tables (PostgreSQL, all scoped by username):
@@ -70,23 +74,75 @@ Database tables (PostgreSQL, all scoped by username):
 """.strip()
 
 
-# ── State ─────────────────────────────────────────────────────────────────────
-def _load() -> dict:
-    if CHET_STATE_FILE.exists():
-        try:
-            return json.loads(CHET_STATE_FILE.read_text())
-        except Exception:
-            pass
-    return {"chat_history": [], "last_analysis": None, "last_recommendation": None}
+# ── DB helpers for recommendation passing ─────────────────────────────────────
+def _db_conn():
+    url = DATABASE_URL
+    if url.startswith("postgres://"):
+        url = url.replace("postgres://", "postgresql://", 1)
+    # psycopg2 uses postgresql:// but also accepts postgres://
+    return psycopg2.connect(url.replace("postgresql://", "postgres://", 1))
 
 
-def _save(state: dict):
-    CHET_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
-    CHET_STATE_FILE.write_text(json.dumps(state))
+def _db_ensure_table():
+    """Create chet_recommendations table if it doesn't exist."""
+    try:
+        with _db_conn() as conn, conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS chet_recommendations (
+                    id SERIAL PRIMARY KEY,
+                    recommendation TEXT NOT NULL,
+                    full_discussion TEXT,
+                    created_at TIMESTAMPTZ DEFAULT NOW(),
+                    consumed BOOLEAN DEFAULT FALSE
+                )
+            """)
+            conn.commit()
+    except Exception as e:
+        logger.warning(f"Could not ensure chet_recommendations table: {e}")
+
+
+def _db_save_recommendation(recommendation: str, full_discussion: str = ""):
+    try:
+        _db_ensure_table()
+        with _db_conn() as conn, conn.cursor() as cur:
+            # Mark all previous as consumed so only one is pending at a time
+            cur.execute("UPDATE chet_recommendations SET consumed = TRUE WHERE consumed = FALSE")
+            cur.execute(
+                "INSERT INTO chet_recommendations (recommendation, full_discussion) VALUES (%s, %s)",
+                (recommendation, full_discussion),
+            )
+            conn.commit()
+    except Exception as e:
+        logger.error(f"Failed to save recommendation to DB: {e}")
+
+
+def _db_get_pending() -> tuple[str, int] | None:
+    """Return (recommendation_text, row_id) or None if nothing pending."""
+    try:
+        _db_ensure_table()
+        with _db_conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                "SELECT id, recommendation FROM chet_recommendations WHERE consumed = FALSE ORDER BY created_at DESC LIMIT 1"
+            )
+            row = cur.fetchone()
+            if row:
+                return row[1], row[0]
+    except Exception as e:
+        logger.error(f"Failed to read recommendation from DB: {e}")
+    return None
+
+
+def _db_consume(rec_id: int):
+    try:
+        with _db_conn() as conn, conn.cursor() as cur:
+            cur.execute("UPDATE chet_recommendations SET consumed = TRUE WHERE id = %s", (rec_id,))
+            conn.commit()
+    except Exception as e:
+        logger.error(f"Failed to consume recommendation: {e}")
 
 
 def _is_owner(update: Update) -> bool:
-    return update.effective_user.id == OWNER_CHAT_ID
+    return update.effective_user and update.effective_user.id == OWNER_CHAT_ID
 
 
 # ── Formatting ────────────────────────────────────────────────────────────────
@@ -424,15 +480,11 @@ async def orchestrate_group_discussion(app, user_message: str):
         paragraphs = [p.strip() for p in chet_r2.split("\n\n") if p.strip()]
         recommendation = paragraphs[-1] if paragraphs else chet_r2[:300]
 
-    CHET_RECOMMENDATION_FILE.parent.mkdir(parents=True, exist_ok=True)
-    CHET_RECOMMENDATION_FILE.write_text(json.dumps({
-        "recommendation": recommendation,
-        "full_discussion": [m["speaker"] + ": " + m["content"] for m in shared_history],
-    }))
+    full_discussion = "\n\n".join(m["speaker"] + ": " + m["content"] for m in shared_history)
+    _db_save_recommendation(recommendation, full_discussion)
 
-    state = _load()
-    state["last_recommendation"] = recommendation
-    _save(state)
+    global _LAST_RECOMMENDATION
+    _LAST_RECOMMENDATION = recommendation
 
     await _post_to_group(
         app,
@@ -441,8 +493,8 @@ async def orchestrate_group_discussion(app, user_message: str):
 
 
 # ── System prompt for private CHET chat ──────────────────────────────────────
-def _build_chat_system(state: dict) -> str:
-    pending = state.get("last_recommendation") or "none"
+def _build_chat_system() -> str:
+    pending = _LAST_RECOMMENDATION or "none"
     return f"""You are CHET, a senior restaurant accountant and CFO advisor for TableMetrics, a restaurant analytics SaaS.
 
 Your expertise: P&L, food cost %, labor %, prime cost, cash flow, menu engineering, payroll, variance analysis, QuickBooks.
@@ -514,10 +566,8 @@ async def cmd_analyze(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 focus=focus,
             ),
         )
-        state = _load()
-        state["last_analysis"]       = result["full_analysis"]
-        state["last_recommendation"] = result["recommendation"]
-        _save(state)
+        global _LAST_RECOMMENDATION
+        _LAST_RECOMMENDATION = result["recommendation"]
         await _send_reply(
             update,
             f"🧮 *CHET Analysis:*\n\n{result['full_analysis']}\n\n---\nRun */recommend* to send this to BART.",
@@ -528,19 +578,14 @@ async def cmd_analyze(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 
 async def cmd_recommend(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    """/recommend — send current recommendation to BART via shared state."""
+    """/recommend — send current recommendation to BART via the database."""
     if not _is_owner(update):
         return
-    state = _load()
-    rec = state.get("last_recommendation")
+    rec = _LAST_RECOMMENDATION
     if not rec:
         await update.message.reply_text("No recommendation yet. Run /analyze first or have a group discussion.")
         return
-    CHET_RECOMMENDATION_FILE.parent.mkdir(parents=True, exist_ok=True)
-    CHET_RECOMMENDATION_FILE.write_text(json.dumps({
-        "recommendation": rec,
-        "full_analysis": state.get("last_analysis", ""),
-    }))
+    _db_save_recommendation(rec)
     await _post_to_group(
         ctx.application,
         f"🧮 *CHET → BART:*\n\n{rec}\n\nBART: run */pickup* to implement this.",
@@ -554,10 +599,16 @@ async def cmd_recommend(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 async def cmd_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not _is_owner(update):
         return
-    state = _load()
-    rec = state.get("last_recommendation") or "none"
+    pending = _db_get_pending()
+    if pending:
+        rec_text, _ = pending
+        status = f"Pending (not yet picked up by BART):\n_{rec_text}_"
+    elif _LAST_RECOMMENDATION:
+        status = f"Last recommendation (already sent or consumed):\n_{_LAST_RECOMMENDATION}_"
+    else:
+        status = "none"
     await update.message.reply_text(
-        f"📋 *CHET Status*\n\nLast recommendation:\n_{rec}_",
+        f"📋 *CHET Status*\n\n{status}",
         parse_mode="Markdown",
     )
 
@@ -565,9 +616,8 @@ async def cmd_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 async def cmd_clearchat(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not _is_owner(update):
         return
-    state = _load()
-    state["chat_history"] = []
-    _save(state)
+    global _CHAT_HISTORY
+    _CHAT_HISTORY = []
     await update.message.reply_text("💬 Conversation cleared.")
 
 
@@ -597,15 +647,14 @@ async def handle_private_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE)
     if update.effective_chat.id == GROUP_CHAT_ID:
         return  # handled separately
 
-    state   = _load()
-    history = state.get("chat_history", [])
-    history.append({"role": "user", "content": update.message.text})
+    global _CHAT_HISTORY
+    _CHAT_HISTORY.append({"role": "user", "content": update.message.text})
 
     await ctx.bot.send_chat_action(update.effective_chat.id, "typing")
 
     try:
         client = anthropic.Anthropic(api_key=ANTHROPIC_KEY)
-        history = await _trim_history(client, history)
+        _CHAT_HISTORY = await _trim_history(client, _CHAT_HISTORY)
         resp = None
 
         def _serialize(block) -> dict:
@@ -619,22 +668,22 @@ async def handle_private_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE)
             resp = client.messages.create(
                 model="claude-sonnet-4-6",
                 max_tokens=2048,
-                system=_build_chat_system(state),
+                system=_build_chat_system(),
                 tools=_TOOLS,
-                messages=history,
+                messages=_CHAT_HISTORY,
             )
             if resp.stop_reason == "end_turn":
-                history.append({"role": "assistant", "content": [_serialize(b) for b in resp.content]})
+                _CHAT_HISTORY.append({"role": "assistant", "content": [_serialize(b) for b in resp.content]})
                 break
             if resp.stop_reason == "tool_use":
-                history.append({"role": "assistant", "content": [_serialize(b) for b in resp.content]})
+                _CHAT_HISTORY.append({"role": "assistant", "content": [_serialize(b) for b in resp.content]})
                 await ctx.bot.send_chat_action(update.effective_chat.id, "typing")
                 results = []
                 for block in resp.content:
                     if block.type == "tool_use":
                         out = _execute_tool(block.name, block.input)
                         results.append({"type": "tool_result", "tool_use_id": block.id, "content": out[:8000]})
-                history.append({"role": "user", "content": results})
+                _CHAT_HISTORY.append({"role": "user", "content": results})
             else:
                 break
 
@@ -645,8 +694,6 @@ async def handle_private_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE)
                     reply = block.text.strip()
                     break
 
-        state["chat_history"] = history
-        _save(state)
         await _send_reply(update, reply)
 
     except Exception as e:
@@ -690,15 +737,14 @@ async def handle_photo(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             "What financial data is shown? Is it clear and useful for a restaurant owner? "
             "What's missing?"
         )
-        state   = _load()
-        history = state.get("chat_history", [])
+        global _CHAT_HISTORY
         client  = anthropic.Anthropic(api_key=ANTHROPIC_KEY)
         resp = client.messages.create(
             model="claude-sonnet-4-6",
             max_tokens=2048,
-            system=_build_chat_system(state),
+            system=_build_chat_system(),
             tools=_TOOLS,
-            messages=history + [
+            messages=_CHAT_HISTORY + [
                 {
                     "role": "user",
                     "content": [
@@ -713,10 +759,8 @@ async def handle_photo(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             if hasattr(block, "text") and block.text.strip():
                 reply = block.text.strip()
                 break
-        history.append({"role": "user", "content": f"[Screenshot shared] {caption}"})
-        history.append({"role": "assistant", "content": [{"type": "text", "text": reply}]})
-        state["chat_history"] = history
-        _save(state)
+        _CHAT_HISTORY.append({"role": "user", "content": f"[Screenshot shared] {caption}"})
+        _CHAT_HISTORY.append({"role": "assistant", "content": [{"type": "text", "text": reply}]})
         await _send_reply(update, reply)
     except Exception as e:
         logger.exception("Photo handler failed")

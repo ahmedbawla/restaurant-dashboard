@@ -18,6 +18,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 
+import psycopg2
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
@@ -36,11 +37,11 @@ BOT_TOKEN     = os.environ["TELEGRAM_BOT_TOKEN"]
 OWNER_CHAT_ID = int(os.environ["TELEGRAM_CHAT_ID"])
 ANTHROPIC_KEY = os.environ["ANTHROPIC_API_KEY"]
 GITHUB_TOKEN  = os.environ["GITHUB_TOKEN"]
+DATABASE_URL  = os.environ.get("DATABASE_URL", "")
 GITHUB_REPO   = os.environ.get("GITHUB_REPO", "ahmedbawla/restaurant-dashboard")
 GROUP_CHAT_ID = int(os.environ.get("TELEGRAM_GROUP_CHAT_ID", 0))
 
 STATE_FILE = Path("/data/agent_state.json")
-CHET_RECOMMENDATION_FILE = Path("/data/chet_recommendation.json")
 
 
 # ── State persistence ─────────────────────────────────────────────────────────
@@ -59,7 +60,43 @@ def _save(state: dict):
 
 
 def _is_owner(update: Update) -> bool:
-    return update.effective_user.id == OWNER_CHAT_ID
+    return update.effective_user and update.effective_user.id == OWNER_CHAT_ID
+
+
+# ── CHET recommendation DB helpers ────────────────────────────────────────────
+def _db_conn():
+    url = DATABASE_URL
+    if url.startswith("postgresql://"):
+        url = url.replace("postgresql://", "postgres://", 1)
+    return psycopg2.connect(url)
+
+
+def _db_get_pickup() -> tuple[str, int] | None:
+    """Return (recommendation_text, row_id) or None if nothing pending."""
+    if not DATABASE_URL:
+        return None
+    try:
+        with _db_conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                "SELECT id, recommendation FROM chet_recommendations WHERE consumed = FALSE ORDER BY created_at DESC LIMIT 1"
+            )
+            row = cur.fetchone()
+            if row:
+                return row[1], row[0]
+    except Exception as e:
+        logger.warning(f"DB pickup read failed: {e}")
+    return None
+
+
+def _db_consume(rec_id: int):
+    if not DATABASE_URL:
+        return
+    try:
+        with _db_conn() as conn, conn.cursor() as cur:
+            cur.execute("UPDATE chet_recommendations SET consumed = TRUE WHERE id = %s", (rec_id,))
+            conn.commit()
+    except Exception as e:
+        logger.warning(f"DB consume failed: {e}")
 
 
 # ── Command handlers ──────────────────────────────────────────────────────────
@@ -285,16 +322,13 @@ async def cmd_pickup(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not _is_owner(update):
         return
 
-    if not CHET_RECOMMENDATION_FILE.exists():
+    pending = _db_get_pickup()
+    if not pending:
         await update.message.reply_text("No recommendation from CHET yet. Ask CHET to run /recommend first.")
         return
 
-    try:
-        data = json.loads(CHET_RECOMMENDATION_FILE.read_text())
-        rec  = data.get("recommendation", "").strip()
-    except Exception:
-        await update.message.reply_text("Could not read CHET's recommendation. Ask CHET to run /recommend again.")
-        return
+    rec, rec_id = pending
+    rec = rec.strip()
 
     if not rec:
         await update.message.reply_text("CHET's recommendation is empty. Ask CHET to run /recommend again.")
@@ -321,8 +355,8 @@ async def cmd_pickup(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         state["last_files"]   = result.get("files", [])
         _save(state)
 
-        # Clear CHET's recommendation so it isn't picked up twice
-        CHET_RECOMMENDATION_FILE.unlink(missing_ok=True)
+        # Mark CHET's recommendation as consumed so it isn't picked up twice
+        _db_consume(rec_id)
 
         await _send_reply(
             update,
