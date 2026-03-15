@@ -22,16 +22,16 @@ if username != "test":
 # ── API key ───────────────────────────────────────────────────────────────────
 _api_key = None
 try:
-    _api_key = st.secrets["anthropic"]["api_key"]
+    _api_key = st.secrets["minimax"]["api_key"]
 except Exception:
     pass
 if not _api_key:
-    _api_key = os.environ.get("ANTHROPIC_API_KEY")
+    _api_key = os.environ.get("MINIMAX_API_KEY")
 
 if not _api_key:
     st.error(
-        "Anthropic API key not configured. "
-        "Add an `[anthropic]` section with `api_key` to your Streamlit secrets."
+        "MiniMax API key not configured. "
+        "Add a `[minimax]` section with `api_key` to your Streamlit secrets."
     )
     st.stop()
 
@@ -135,16 +135,23 @@ if prompt := st.chat_input("Ask about your data…"):
     with st.chat_message("user"):
         st.markdown(prompt)
 
-    import anthropic as _anthropic
-    _client = _anthropic.Anthropic(api_key=_api_key)
+    from openai import OpenAI as _OpenAI
+    _client = _OpenAI(api_key=_api_key, base_url="https://api.minimaxi.chat/v1")
+    _stream = _client.chat.completions.create(
+        model="MiniMax-Text-01",
+        max_tokens=1024,
+        messages=[{"role": "system", "content": _system}]
+                 + st.session_state["chat_messages"],
+        stream=True,
+    )
+
+    def _token_gen():
+        for _chunk in _stream:
+            _delta = _chunk.choices[0].delta.content
+            if _delta:
+                yield _delta
 
     with st.chat_message("assistant"):
-        with _client.messages.stream(
-            model="claude-haiku-4-5-20251001",
-            max_tokens=1024,
-            system=_system,
-            messages=st.session_state["chat_messages"],
-        ) as _stream:
-            _response = st.write_stream(_stream.text_stream)
+        _response = st.write_stream(_token_gen())
 
     st.session_state["chat_messages"].append({"role": "assistant", "content": _response})
