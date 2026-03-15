@@ -22,6 +22,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
 
+from accountant import run_accountant
 from runner import run_agent
 
 logging.basicConfig(
@@ -269,6 +270,43 @@ async def cmd_reject(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ Could not delete branch:\n{e}\n\nState cleared.")
 
 
+async def cmd_think(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """/think [topic] — accounting expert analyzes the dashboard and sets a recommendation as BART's focus."""
+    if not _is_owner(update):
+        return
+
+    focus = " ".join(ctx.args) if ctx.args else None
+    hint  = f" (focus: {focus})" if focus else ""
+    await update.message.reply_text(f"🧮 Accounting agent analyzing the dashboard{hint}… 1-2 minutes.")
+
+    try:
+        result = await asyncio.get_event_loop().run_in_executor(
+            None,
+            lambda: run_accountant(
+                github_token=GITHUB_TOKEN,
+                github_repo=GITHUB_REPO,
+                anthropic_api_key=ANTHROPIC_KEY,
+                focus=focus,
+            ),
+        )
+        state = _load()
+        state["focus"]                = result["recommendation"]
+        state["accounting_analysis"]  = result["full_analysis"]
+        _save(state)
+
+        await _send_reply(
+            update,
+            f"🧮 *Accounting Agent*\n\n"
+            f"{result['full_analysis']}\n\n"
+            f"---\n"
+            f"*Recommendation saved as BART's focus.*\n"
+            f"Run /run to implement · /focus [override] to change it",
+        )
+    except Exception as e:
+        logger.exception("Accounting agent failed")
+        await update.message.reply_text(f"❌ Accounting agent failed:\n{e}")
+
+
 async def cmd_rollback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     """/rollback — revert the last commit on main and push."""
     if not _is_owner(update):
@@ -436,6 +474,8 @@ async def cmd_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
     await update.message.reply_text(
         "🤖 *Dashboard Agent*\n\n"
+        "/think — accounting expert recommends a feature for BART\n"
+        "/think [topic] — same, with a specific accounting area to focus on\n"
         "/do — implement whatever we just discussed in chat\n"
         "/do [hint] — same, with extra direction\n"
         "/run — trigger agent freely (uses /focus if set)\n"
@@ -883,6 +923,7 @@ def main():
     app = Application.builder().token(BOT_TOKEN).post_init(post_init).build()
 
     for cmd, handler in [
+        ("think",     cmd_think),
         ("run",       cmd_run),
         ("do",        cmd_do),
         ("deploy",    cmd_deploy),
