@@ -139,10 +139,13 @@ async def cmd_reject(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     repo_url = f"https://x-access-token:{GITHUB_TOKEN}@github.com/{GITHUB_REPO}.git"
 
     def _do():
-        subprocess.run(
+        result = subprocess.run(
             f"git push {repo_url} --delete {branch}",
-            shell=True, check=True, capture_output=True,
+            shell=True, capture_output=True, text=True,
         )
+        if result.returncode != 0:
+            err = (result.stderr or result.stdout).strip().replace(GITHUB_TOKEN, "***")
+            raise RuntimeError(err)
 
     try:
         await asyncio.get_event_loop().run_in_executor(None, _do)
@@ -151,8 +154,11 @@ async def cmd_reject(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             f"🗑️ Rejected — branch `{branch}` deleted.", parse_mode="Markdown"
         )
-    except Exception as e:
-        await update.message.reply_text(f"❌ Could not delete branch: {e}")
+    except RuntimeError as e:
+        # Branch may already be gone — clear state anyway
+        state["last_branch"] = None
+        _save(state)
+        await update.message.reply_text(f"❌ Could not delete branch:\n{e}\n\nState cleared.")
 
 
 async def cmd_do(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
