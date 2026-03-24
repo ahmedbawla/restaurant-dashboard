@@ -365,7 +365,7 @@ def generate_card_html(data: dict) -> str:
     </div>
     <div class="header-right">
       Daily Intelligence Report<br>
-      {today.strftime("%A, %B %-d %Y")}
+      {today.strftime("%A, %B") + " " + str(today.day) + " " + str(today.year)}
     </div>
   </div>
 
