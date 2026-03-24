@@ -15,11 +15,25 @@ import pandas as pd
 # Internal helpers
 # ---------------------------------------------------------------------------
 
-def _read_raw(raw: bytes, filename: str = "") -> pd.DataFrame:
-    """Parse CSV or Excel bytes into a raw DataFrame."""
+def _read_raw(raw: bytes, filename: str = "", sheet_hint: str | None = None) -> pd.DataFrame:
+    """Parse CSV or Excel bytes into a raw DataFrame.
+
+    For multi-sheet Toast Sales Summary exports, pass sheet_hint to target
+    a specific sheet (e.g. 'Sales by day').  Falls back to first sheet if
+    the hint doesn't match.
+    """
     try:
-        if filename.endswith(".xlsx") or raw[:4] == b"PK\x03\x04":
-            return pd.read_excel(io.BytesIO(raw))
+        if filename.lower().endswith(".xlsx") or raw[:4] == b"PK\x03\x04":
+            xf = pd.ExcelFile(io.BytesIO(raw))
+            # If a hint is provided and the sheet exists, use it
+            if sheet_hint and sheet_hint in xf.sheet_names:
+                return xf.parse(sheet_hint)
+            # Auto-detect Toast Sales Summary multi-sheet exports
+            for preferred in ("Sales by day", "Daily Sales", "sales_by_day"):
+                if preferred in xf.sheet_names:
+                    return xf.parse(preferred)
+            # Fall back to first sheet
+            return xf.parse(0)
         # Try UTF-8 first, fall back to latin-1 for older Toast exports
         try:
             return pd.read_csv(io.BytesIO(raw), encoding="utf-8")
