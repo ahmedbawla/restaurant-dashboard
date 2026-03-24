@@ -46,13 +46,12 @@ def fetch_card_data(username: str) -> dict:
         """), {"u": username, "d": yesterday}).fetchone()
         labor_total = float(labor_row[0]) if labor_row else 0
 
-        # This week's expenses total
-        week_start = (today - timedelta(days=today.weekday())).isoformat()
+        # Expenses over the same 7-day window as sales
         exp_row = conn.execute(text("""
             SELECT COALESCE(SUM(amount), 0) as total_exp
             FROM expenses
             WHERE username = :u AND date >= :d
-        """), {"u": username, "d": week_start}).fetchone()
+        """), {"u": username, "d": d7}).fetchone()
         expenses_week = float(exp_row[0]) if exp_row else 0
 
         # User info
