@@ -1091,6 +1091,29 @@ async def cmd_clearchat(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 
 # ── Nightly run ───────────────────────────────────────────────────────────────
+def _send_all_daily_cards():
+    """Send morning card to every user that has a telegram_chat_id configured."""
+    import sys, os as _os
+    sys.path.insert(0, str(Path(__file__).parent.parent))
+    try:
+        from utils.daily_card import send_daily_card
+        from data.database import get_engine
+        from sqlalchemy import text as _text
+        engine = get_engine()
+        with engine.connect() as conn:
+            rows = conn.execute(_text(
+                "SELECT username FROM users WHERE telegram_chat_id IS NOT NULL AND telegram_chat_id != ''"
+            )).fetchall()
+        for row in rows:
+            try:
+                send_daily_card(row[0])
+                logger.info(f"Daily card sent to {row[0]}")
+            except Exception as e:
+                logger.warning(f"Daily card failed for {row[0]}: {e}")
+    except Exception as e:
+        logger.error(f"_send_all_daily_cards failed: {e}")
+
+
 async def nightly_run(app: Application):
     state = _load()
     logger.info("Nightly agent run starting")
@@ -1129,6 +1152,8 @@ def main():
             lambda: asyncio.create_task(nightly_run(application)),
             "cron", hour=2, minute=0,
         )
+        # Daily morning card — 7 AM UTC for all active users
+        scheduler.add_job(_send_all_daily_cards, "cron", hour=7, minute=0)
         scheduler.start()
         logger.info("Scheduler started")
 
