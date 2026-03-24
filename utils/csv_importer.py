@@ -135,13 +135,13 @@ def parse_sales_summary(raw: bytes, filename: str = "") -> pd.DataFrame:
 
 def parse_item_selections(raw: bytes, filename: str = "") -> pd.DataFrame:
     """
-    Parse a Toast Item Selections export.
+    Parse a Toast Item Selections or Product Mix export.
 
     Returns DataFrame with columns:
         name, category, price, quantity_sold, total_revenue,
         total_cost, gross_profit, margin_pct
     """
-    df = _read_raw(raw, filename)
+    df = _read_raw(raw, filename, sheet_hint="Items")
     df = df.dropna(how="all")
 
     col_map = {
