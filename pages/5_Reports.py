@@ -31,6 +31,8 @@ page_header(
     "📄 Reports & Analytics",
     subtitle=f"Generate and export performance reports for {user['restaurant_name']}.",
     eyebrow="Reporting",
+    start_date=start_date,
+    end_date=end_date,
 )
 st.divider()
 

@@ -23,6 +23,8 @@ page_header(
     "📈 Sales Analysis",
     subtitle="Revenue, guest covers, and check-size trends from your uploaded sales data.",
     eyebrow="Revenue Analytics",
+    start_date=start_date,
+    end_date=end_date,
 )
 
 # ── Data ─────────────────────────────────────────────────────────────────────

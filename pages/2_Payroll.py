@@ -25,6 +25,8 @@ page_header(
     "👥 Payroll & Labour",
     subtitle="Payroll summary and workforce breakdown from your Paychex data.",
     eyebrow="Workforce Analytics",
+    start_date=start_date,
+    end_date=end_date,
 )
 
 # ── Chart style constants ─────────────────────────────────────────────────────

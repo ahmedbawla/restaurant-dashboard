@@ -261,6 +261,19 @@ def apply_professional_theme() -> None:
         margin-bottom: 0.6rem;
         margin-top: -4px;
     }
+    .date-range-pill {
+        display: inline-block;
+        background: rgba(255,107,53,0.10);
+        border: 1px solid rgba(255,107,53,0.28);
+        border-radius: 20px;
+        padding: 3px 12px;
+        font-size: 0.75rem;
+        font-weight: 600;
+        color: rgba(255,107,53,0.9);
+        letter-spacing: 0.3px;
+        margin-bottom: 0.8rem;
+        margin-top: -2px;
+    }
 
     /* ── KPI accent cards ───────────────────────────────────────────── */
     .kpi-green  { border-left: 3px solid #2ecc71 !important; }
@@ -316,12 +329,30 @@ def apply_professional_theme() -> None:
     """, unsafe_allow_html=True)
 
 
-def page_header(title: str, subtitle: str = "", eyebrow: str = "Business Intelligence") -> None:
-    """Render a branded page header."""
+def page_header(
+    title: str,
+    subtitle: str = "",
+    eyebrow: str = "Business Intelligence",
+    start_date=None,
+    end_date=None,
+) -> None:
+    """Render a branded page header with an optional active date range pill."""
     st.markdown(f'<p class="report-eyebrow">{eyebrow}</p>', unsafe_allow_html=True)
     st.title(title)
     if subtitle:
         st.markdown(f'<p class="report-subtitle">{subtitle}</p>', unsafe_allow_html=True)
+    if start_date and end_date:
+        try:
+            s = start_date.strftime("%b %-d, %Y")
+            e = end_date.strftime("%b %-d, %Y")
+        except ValueError:
+            # Windows doesn't support %-d
+            s = start_date.strftime("%b") + " " + str(start_date.day) + ", " + str(start_date.year)
+            e = end_date.strftime("%b") + " " + str(end_date.day) + ", " + str(end_date.year)
+        st.markdown(
+            f'<div class="date-range-pill">📅 {s} — {e}</div>',
+            unsafe_allow_html=True,
+        )
 
 
 def section_header(label: str, help: str = None) -> None:

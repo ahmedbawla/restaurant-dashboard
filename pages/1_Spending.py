@@ -30,6 +30,8 @@ with _hdr_col:
         "💳 Spending & Expenses",
         subtitle="Operating expense breakdown sourced from QuickBooks Online.",
         eyebrow="Financial Analysis",
+        start_date=start_date,
+        end_date=end_date,
     )
 
 with _qb_col:

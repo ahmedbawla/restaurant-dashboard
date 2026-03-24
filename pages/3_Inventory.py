@@ -10,13 +10,17 @@ from components.theme import page_header, section_header
 from components.kpi_card import format_currency
 from data import database as db
 
-user     = st.session_state["user"]
-username = user["username"]
+user       = st.session_state["user"]
+username   = user["username"]
+start_date = st.session_state.get("start_date")
+end_date   = st.session_state.get("end_date")
 
 page_header(
     "🥩 Menu Mix & Item Performance",
     subtitle="Item-level sales analytics sourced from Toast POS.",
     eyebrow="Menu Analytics",
+    start_date=start_date,
+    end_date=end_date,
 )
 
 # ── Data ──────────────────────────────────────────────────────────────────────
