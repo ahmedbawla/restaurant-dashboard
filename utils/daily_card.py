@@ -24,18 +24,19 @@ def fetch_card_data(username: str) -> dict:
     """Pull the last 14 days of data needed for the morning card."""
     from data.database import get_engine
     engine = get_engine()
-    today = date.today()
-    d7    = (today - timedelta(days=7)).isoformat()
-    d14   = (today - timedelta(days=14)).isoformat()
+    today     = date.today()
+    yesterday = (today - timedelta(days=1)).isoformat()
+    d7        = (today - timedelta(days=7)).isoformat()
+    d14       = (today - timedelta(days=14)).isoformat()
 
     with engine.connect() as conn:
-        # Last 14 days of sales (7 for this week, 7 for WoW comparison)
+        # Cap at yesterday — never include today's incomplete data
         rows = conn.execute(text("""
             SELECT date, revenue, covers, avg_check
             FROM daily_sales
-            WHERE username = :u AND date >= :d
+            WHERE username = :u AND date >= :d AND date <= :yest
             ORDER BY date DESC
-        """), {"u": username, "d": d14}).fetchall()
+        """), {"u": username, "d": d14, "yest": yesterday}).fetchall()
         all_sales = [dict(r._mapping) for r in rows]
 
         # Split: this week vs prior week

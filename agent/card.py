@@ -24,19 +24,21 @@ def _conn():
 # ── Data fetch ─────────────────────────────────────────────────────────────────
 
 def fetch_card_data(username: str) -> dict:
-    today = date.today()
-    d7    = (today - timedelta(days=7)).isoformat()
-    d14   = (today - timedelta(days=14)).isoformat()
+    today     = date.today()
+    yesterday = (today - timedelta(days=1)).isoformat()
+    d7        = (today - timedelta(days=7)).isoformat()
+    d14       = (today - timedelta(days=14)).isoformat()
 
     with _conn() as db:
         with db.cursor() as cur:
-            # Last 14 days of sales
+            # Last 14 days of sales, capped at yesterday so today's
+            # incomplete data is never included regardless of run time
             cur.execute("""
                 SELECT date, revenue, covers, avg_check
                 FROM daily_sales
-                WHERE username = %s AND date >= %s
+                WHERE username = %s AND date >= %s AND date <= %s
                 ORDER BY date DESC
-            """, (username, d14))
+            """, (username, d14, yesterday))
             all_sales = [
                 {"date": str(r[0]), "revenue": float(r[1] or 0),
                  "covers": int(r[2] or 0), "avg_check": float(r[3] or 0)}
