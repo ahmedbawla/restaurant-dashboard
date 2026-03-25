@@ -1101,7 +1101,7 @@ async def cmd_card(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         /ahsan               — shortcut (command name IS the username)
     """
     import sys
-    sys.path.insert(0, str(Path(__file__).parent.parent))
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
     # Resolve username: explicit arg takes priority, then command name itself
     username = (ctx.args[0].strip().lower() if ctx.args else None)
@@ -1137,7 +1137,7 @@ async def cmd_card(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 def _send_all_daily_cards():
     """Send morning card (Telegram + email) to every configured user."""
     import sys
-    sys.path.insert(0, str(Path(__file__).parent.parent))
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
     try:
         from utils.daily_card import send_daily_card, send_daily_card_email
         from data.database import get_engine
