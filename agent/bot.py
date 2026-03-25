@@ -1260,8 +1260,6 @@ def main():
             lambda: asyncio.create_task(nightly_run(application)),
             "cron", hour=2, minute=0,
         )
-        # Daily morning card — 7 AM UTC for all active users
-        scheduler.add_job(_send_all_daily_cards, "cron", hour=7, minute=0)
         scheduler.start()
         logger.info("Scheduler started")
 
