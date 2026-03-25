@@ -21,23 +21,28 @@ from sqlalchemy import text
 # ── Data fetch ────────────────────────────────────────────────────────────────
 
 def fetch_card_data(username: str) -> dict:
-    """Pull the last 7 days of data needed for the morning card."""
+    """Pull the last 14 days of data needed for the morning card."""
     from data.database import get_engine
     engine = get_engine()
-    today  = date.today()
-    d7     = (today - timedelta(days=7)).isoformat()
+    today = date.today()
+    d7    = (today - timedelta(days=7)).isoformat()
+    d14   = (today - timedelta(days=14)).isoformat()
 
     with engine.connect() as conn:
-        # Last 7 days of sales
+        # Last 14 days of sales (7 for this week, 7 for WoW comparison)
         rows = conn.execute(text("""
-            SELECT date, revenue, covers, avg_check, food_cost_pct
+            SELECT date, revenue, covers, avg_check
             FROM daily_sales
             WHERE username = :u AND date >= :d
             ORDER BY date DESC
-        """), {"u": username, "d": d7}).fetchall()
-        sales = [dict(r._mapping) for r in rows]
+        """), {"u": username, "d": d14}).fetchall()
+        all_sales = [dict(r._mapping) for r in rows]
 
-        # Yesterday's labor cost %
+        # Split: this week vs prior week
+        sales       = [r for r in all_sales if str(r["date"]) >= d7]
+        prior_sales = [r for r in all_sales if str(r["date"]) <  d7]
+
+        # Yesterday's labor cost (only populated if Paychex connected)
         yesterday = (today - timedelta(days=1)).isoformat()
         labor_row = conn.execute(text("""
             SELECT COALESCE(SUM(labor_cost), 0) as total_labor
@@ -46,7 +51,7 @@ def fetch_card_data(username: str) -> dict:
         """), {"u": username, "d": yesterday}).fetchone()
         labor_total = float(labor_row[0]) if labor_row else 0
 
-        # Expenses over the same 7-day window as sales
+        # Expenses over the same 7-day window
         exp_row = conn.execute(text("""
             SELECT COALESCE(SUM(amount), 0) as total_exp
             FROM expenses
@@ -65,7 +70,8 @@ def fetch_card_data(username: str) -> dict:
         "username":        username,
         "restaurant_name": restaurant_name,
         "email":           email,
-        "sales":           sales,          # list of dicts, newest first
+        "sales":           sales,         # newest first, last 7 days
+        "prior_sales":     prior_sales,   # prior 7 days for WoW
         "labor_total":     labor_total,
         "expenses_week":   expenses_week,
         "today":           today,
@@ -77,23 +83,48 @@ def fetch_card_data(username: str) -> dict:
 def _build_alerts(data: dict) -> list[str]:
     alerts = []
     sales  = data["sales"]
+    prior  = data.get("prior_sales", [])
+
     if not sales:
         return ["No sales data yet — connect your Toast POS to get started."]
 
-    yesterday = sales[0] if sales else None
-    if yesterday:
-        fc = yesterday.get("food_cost_pct") or 0
-        if fc > 32:
-            alerts.append(f"Food cost at {fc:.0f}% yesterday — target is under 32%.")
-        rev = yesterday.get("revenue") or 0
-        if rev == 0:
-            alerts.append("No sales recorded yesterday — check your Toast sync.")
+    yesterday = sales[0]
+    yest_rev  = yesterday.get("revenue") or 0
+    if yest_rev == 0:
+        alerts.append("No sales recorded yesterday — check your Toast sync.")
 
+    # Week-over-week revenue
+    wtd_rev   = sum(r.get("revenue") or 0 for r in sales)
+    prior_rev = sum(r.get("revenue") or 0 for r in prior)
+    if prior_rev > 0 and wtd_rev > 0:
+        wow_pct = (wtd_rev - prior_rev) / prior_rev * 100
+        if wow_pct <= -10:
+            alerts.append(f"Revenue is {abs(wow_pct):.0f}% below last week — review recent trends.")
+        elif wow_pct >= 10:
+            alerts.append(f"Revenue up {wow_pct:.0f}% vs last week — great momentum!")
+
+    # Expense ratio alert
+    if data["expenses_week"] > 0 and wtd_rev > 0:
+        exp_ratio = data["expenses_week"] / wtd_rev * 100
+        if exp_ratio > 45:
+            alerts.append(f"Expenses at {exp_ratio:.0f}% of revenue this week — review your spend.")
+
+    # Avg check dip
+    yest_avg = yesterday.get("avg_check") or (yest_rev / yesterday["covers"] if yesterday.get("covers") else 0)
+    if len(sales) >= 4 and yest_avg > 0:
+        recent_avg = sum(
+            r.get("avg_check") or (r.get("revenue", 0) / r["covers"] if r.get("covers") else 0)
+            for r in sales[1:4]
+        ) / 3
+        if recent_avg > 0 and yest_avg < recent_avg * 0.92:
+            alerts.append(f"Avg check dropped to ${yest_avg:.0f} — down from ${recent_avg:.0f} recent average.")
+
+    # Labour (only if Paychex data exists)
     labor = data["labor_total"]
-    if labor > 0 and yesterday and yesterday.get("revenue", 0) > 0:
-        labor_pct = labor / yesterday["revenue"] * 100
+    if labor > 0 and yest_rev > 0:
+        labor_pct = labor / yest_rev * 100
         if labor_pct > 35:
-            alerts.append(f"Labour cost at {labor_pct:.0f}% of revenue yesterday — target under 35%.")
+            alerts.append(f"Labour at {labor_pct:.0f}% of revenue yesterday — target under 35%.")
 
     if not alerts:
         alerts.append("All metrics look healthy today. Keep it up!")
@@ -103,20 +134,38 @@ def _build_alerts(data: dict) -> list[str]:
 # ── HTML card ─────────────────────────────────────────────────────────────────
 
 def generate_card_html(data: dict) -> str:
-    sales            = data["sales"]
-    restaurant_name  = data["restaurant_name"]
-    today            = data["today"]
-    alerts           = _build_alerts(data)
+    sales           = data["sales"]
+    prior_sales     = data.get("prior_sales", [])
+    restaurant_name = data["restaurant_name"]
+    today           = data["today"]
+    alerts          = _build_alerts(data)
 
     # Yesterday summary
-    yest             = sales[0] if sales else {}
-    yest_rev         = yest.get("revenue") or 0
-    yest_covers      = yest.get("covers")  or 0
-    yest_avg         = yest.get("avg_check") or (yest_rev / yest_covers if yest_covers else 0)
-    yest_fc          = yest.get("food_cost_pct") or 0
+    yest       = sales[0] if sales else {}
+    yest_rev   = yest.get("revenue") or 0
+    yest_covers = yest.get("covers") or 0
+    yest_avg   = yest.get("avg_check") or (yest_rev / yest_covers if yest_covers else 0)
 
-    # Week-to-date
-    wtd_rev = sum(r.get("revenue") or 0 for r in sales)
+    # Week totals
+    wtd_rev   = sum(r.get("revenue") or 0 for r in sales)
+    prior_rev = sum(r.get("revenue") or 0 for r in prior_sales)
+
+    # Week-over-week %
+    if prior_rev > 0 and wtd_rev > 0:
+        wow_pct  = (wtd_rev - prior_rev) / prior_rev * 100
+        wow_str  = f"{'+' if wow_pct >= 0 else ''}{wow_pct:.0f}%"
+        wow_cls  = "ok" if wow_pct >= 0 else "warn"
+    else:
+        wow_str = "—"
+        wow_cls = ""
+
+    # Expense ratio
+    exp_ratio     = data["expenses_week"] / wtd_rev * 100 if wtd_rev > 0 and data["expenses_week"] > 0 else 0
+    exp_ratio_cls = "warn" if exp_ratio > 45 else ("" if exp_ratio == 0 else "ok")
+
+    # Labour (only shown if data exists)
+    labor_total = data["labor_total"]
+    labor_pct   = labor_total / yest_rev * 100 if labor_total > 0 and yest_rev > 0 else 0
 
     # 7-day cards (oldest → newest)
     day_cards = list(reversed(sales[:7]))
@@ -124,36 +173,41 @@ def generate_card_html(data: dict) -> str:
     def fmt_money(v):
         return f"${v:,.0f}"
 
+    def _day_label(d):
+        try:
+            dt = date.fromisoformat(str(d))
+            return dt.strftime("%a") + " " + str(dt.day)
+        except Exception:
+            return str(d)[-5:]
+
     def day_card_html(row):
-        d    = row.get("date", "")
         rev  = row.get("revenue") or 0
         cov  = row.get("covers")  or 0
         avg  = row.get("avg_check") or (rev / cov if cov else 0)
-        fc   = row.get("food_cost_pct") or 0
-        # Parse date label
-        try:
-            dt    = date.fromisoformat(str(d))
-            label = dt.strftime("%a %-d")
-        except Exception:
-            label = str(d)[-5:]
-
-        fc_color = "#e74c3c" if fc > 32 else "#27ae60"
+        label = _day_label(row.get("date", ""))
         return f"""
         <div class="day-card">
           <div class="day-label">{label}</div>
           <div class="day-rev">{fmt_money(rev)}</div>
           <div class="day-meta">{cov} covers &nbsp;·&nbsp; {fmt_money(avg)} avg</div>
-          <div class="day-fc" style="color:{fc_color}">Food cost {fc:.0f}%</div>
         </div>"""
 
     day_cards_html = "".join(day_card_html(r) for r in day_cards) if day_cards else \
         '<div class="day-card" style="opacity:.4">No data yet</div>'
 
-    alerts_html = "".join(f'<div class="alert-item">⚠ {a}</div>' for a in alerts)
+    alerts_html = "".join(f'<div class="alert-item">{"⚠" if "%" in a or "drop" in a or "below" in a or "No sales" in a else "✓"} {a}</div>' for a in alerts)
 
-    labor_pct = 0
-    if data["labor_total"] > 0 and yest_rev > 0:
-        labor_pct = data["labor_total"] / yest_rev * 100
+    # Build KPI row — Labour only if we have data
+    kpi_labor_html = ""
+    if labor_pct > 0:
+        labor_cls = "warn" if labor_pct > 35 else "ok"
+        kpi_labor_html = f"""
+    <div class="kpi {labor_cls}">
+      <div class="val">{labor_pct:.0f}%</div>
+      <div class="lbl">Labour %</div>
+    </div>"""
+
+    exp_ratio_val = f"{exp_ratio:.0f}%" if exp_ratio > 0 else "—"
 
     return f"""<!DOCTYPE html>
 <html>
@@ -226,25 +280,10 @@ def generate_card_html(data: dict) -> str:
     text-transform: uppercase;
     letter-spacing: 1px;
   }}
-  .hero-stats {{
-    display: flex;
-    gap: 24px;
-    margin-top: 4px;
-  }}
-  .hero-stat {{
-    text-align: right;
-  }}
-  .hero-stat .val {{
-    font-size: 18px;
-    font-weight: 700;
-    color: #fff;
-  }}
-  .hero-stat .lbl {{
-    font-size: 10px;
-    color: #666;
-    text-transform: uppercase;
-    letter-spacing: 0.8px;
-  }}
+  .hero-stats {{ display: flex; gap: 24px; margin-top: 4px; }}
+  .hero-stat {{ text-align: right; }}
+  .hero-stat .val {{ font-size: 18px; font-weight: 700; color: #fff; }}
+  .hero-stat .lbl {{ font-size: 10px; color: #666; text-transform: uppercase; letter-spacing: 0.8px; }}
 
   /* Alerts */
   .alerts {{
@@ -262,19 +301,10 @@ def generate_card_html(data: dict) -> str:
     color: #FF6B35;
     margin-bottom: 6px;
   }}
-  .alert-item {{
-    font-size: 12px;
-    color: #ddd;
-    padding: 3px 0;
-    line-height: 1.5;
-  }}
+  .alert-item {{ font-size: 12px; color: #ddd; padding: 3px 0; line-height: 1.5; }}
 
   /* KPI row */
-  .kpi-row {{
-    display: flex;
-    gap: 10px;
-    margin-bottom: 14px;
-  }}
+  .kpi-row {{ display: flex; gap: 10px; margin-bottom: 14px; }}
   .kpi {{
     flex: 1;
     background: #1a1a1d;
@@ -282,18 +312,8 @@ def generate_card_html(data: dict) -> str:
     padding: 14px 16px;
     text-align: center;
   }}
-  .kpi .val {{
-    font-size: 20px;
-    font-weight: 800;
-    color: #fff;
-  }}
-  .kpi .lbl {{
-    font-size: 10px;
-    color: #666;
-    text-transform: uppercase;
-    letter-spacing: 0.8px;
-    margin-top: 3px;
-  }}
+  .kpi .val {{ font-size: 20px; font-weight: 800; color: #fff; }}
+  .kpi .lbl {{ font-size: 10px; color: #666; text-transform: uppercase; letter-spacing: 0.8px; margin-top: 3px; }}
   .kpi.warn .val {{ color: #e74c3c; }}
   .kpi.ok   .val {{ color: #2ecc71; }}
 
@@ -306,10 +326,7 @@ def generate_card_html(data: dict) -> str:
     color: #555;
     margin-bottom: 8px;
   }}
-  .days {{
-    display: flex;
-    gap: 8px;
-  }}
+  .days {{ display: flex; gap: 8px; }}
   .day-card {{
     flex: 1;
     background: #1a1a1d;
@@ -317,28 +334,9 @@ def generate_card_html(data: dict) -> str:
     padding: 12px 10px;
     text-align: center;
   }}
-  .day-label {{
-    font-size: 10px;
-    color: #666;
-    text-transform: uppercase;
-    letter-spacing: 0.6px;
-    margin-bottom: 5px;
-  }}
-  .day-rev {{
-    font-size: 15px;
-    font-weight: 800;
-    color: #fff;
-    margin-bottom: 3px;
-  }}
-  .day-meta {{
-    font-size: 9.5px;
-    color: #555;
-    margin-bottom: 3px;
-  }}
-  .day-fc {{
-    font-size: 9.5px;
-    font-weight: 600;
-  }}
+  .day-label {{ font-size: 10px; color: #666; text-transform: uppercase; letter-spacing: 0.6px; margin-bottom: 5px; }}
+  .day-rev   {{ font-size: 15px; font-weight: 800; color: #fff; margin-bottom: 3px; }}
+  .day-meta  {{ font-size: 9.5px; color: #555; }}
 
   /* Footer */
   .footer {{
@@ -398,22 +396,22 @@ def generate_card_html(data: dict) -> str:
 
   <!-- KPIs -->
   <div class="kpi-row">
-    <div class="kpi {'warn' if yest_fc > 32 else 'ok'}">
-      <div class="val">{yest_fc:.0f}%</div>
-      <div class="lbl">Food Cost</div>
+    <div class="kpi {wow_cls}">
+      <div class="val">{wow_str}</div>
+      <div class="lbl">vs Last Week</div>
     </div>
-    <div class="kpi {'warn' if labor_pct > 35 else 'ok'}">
-      <div class="val">{labor_pct:.0f}%</div>
-      <div class="lbl">Labour %</div>
+    <div class="kpi {exp_ratio_cls}">
+      <div class="val">{exp_ratio_val}</div>
+      <div class="lbl">Expense Ratio</div>
     </div>
     <div class="kpi">
       <div class="val">{fmt_money(data['expenses_week'])}</div>
-      <div class="lbl">Expenses This Week</div>
+      <div class="lbl">Expenses 7 Days</div>
     </div>
     <div class="kpi">
       <div class="val">{fmt_money(wtd_rev)}</div>
       <div class="lbl">Revenue 7 Days</div>
-    </div>
+    </div>{kpi_labor_html}
   </div>
 
   <!-- 7-day breakdown -->
@@ -482,12 +480,9 @@ def send_daily_card(username: str, out_dir: str = "/tmp") -> bool:
     try:
         render_png(html, png_path)
     except Exception as e:
-        # Playwright not available — fall back to sending HTML link or text
         print(f"PNG render failed ({e}), skipping image send.")
         return False
 
-    # Delivery: use the owner's bot token + chat_id stored per user,
-    # or fall back to the global TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID env vars.
     cfg = _get_telegram_cfg(username)
     bot_token = (cfg or {}).get("bot_token") or os.environ.get("TELEGRAM_BOT_TOKEN", "")
     chat_id   = (cfg or {}).get("chat_id")   or os.environ.get("TELEGRAM_CHAT_ID", "")
