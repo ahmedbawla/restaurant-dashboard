@@ -1100,9 +1100,6 @@ async def cmd_card(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         /card ahsan          — generic form
         /ahsan               — shortcut (command name IS the username)
     """
-    import sys
-    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-
     # Resolve username: explicit arg takes priority, then command name itself
     username = (ctx.args[0].strip().lower() if ctx.args else None)
     if not username:
@@ -1116,11 +1113,11 @@ async def cmd_card(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     status = await update.message.reply_text(f"Generating card for {username}…")
 
     try:
-        from utils.daily_card import fetch_card_data, generate_card_html, _render_png
+        from card import fetch_card_data, generate_card_html, render_png_async
         data     = fetch_card_data(username)
         html     = generate_card_html(data)
         png_path = f"/tmp/card_{username}.png"
-        await _render_png(html, png_path)
+        await render_png_async(html, png_path)
         caption = (
             f"Daily report · {data['restaurant_name']} · "
             + data["today"].strftime("%B") + " " + str(data["today"].day)
@@ -1135,36 +1132,93 @@ async def cmd_card(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 # ── Nightly run ───────────────────────────────────────────────────────────────
 def _send_all_daily_cards():
-    """Send morning card (Telegram + email) to every configured user."""
-    import sys
-    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    """Send morning card (Telegram PNG + email PDF) to every configured user."""
     try:
-        from utils.daily_card import send_daily_card, send_daily_card_email
-        from data.database import get_engine
-        from sqlalchemy import text as _text
-        engine = get_engine()
-        with engine.connect() as conn:
-            rows = conn.execute(_text(
-                "SELECT username, email, telegram_chat_id FROM users WHERE username IS NOT NULL"
-            )).fetchall()
-        for row in rows:
-            uname, email, tg_id = row[0], row[1], row[2]
-            # Telegram — only if chat_id is set
-            if tg_id:
-                try:
-                    send_daily_card(uname)
-                    logger.info(f"Telegram card sent to {uname}")
-                except Exception as e:
-                    logger.warning(f"Telegram card failed for {uname}: {e}")
-            # Email — only if email on file
-            if email:
-                try:
-                    send_daily_card_email(uname)
-                    logger.info(f"Email card sent to {uname} ({email})")
-                except Exception as e:
-                    logger.warning(f"Email card failed for {uname}: {e}")
+        from card import fetch_card_data, generate_card_html, render_png_async
+        import asyncio, requests as _req
     except Exception as e:
-        logger.error(f"_send_all_daily_cards failed: {e}")
+        logger.error(f"_send_all_daily_cards import failed: {e}")
+        return
+
+    try:
+        with _db_conn() as db:
+            with db.cursor() as cur:
+                cur.execute("SELECT username, email, telegram_bot_token, telegram_chat_id FROM users WHERE username IS NOT NULL")
+                rows = cur.fetchall()
+    except Exception as e:
+        logger.error(f"_send_all_daily_cards DB failed: {e}")
+        return
+
+    for uname, email, bot_token, chat_id in rows:
+        try:
+            data     = fetch_card_data(uname)
+            html     = generate_card_html(data)
+            png_path = f"/tmp/card_{uname}.png"
+            asyncio.run(render_png_async(html, png_path))
+
+            # ── Telegram ──────────────────────────────────────────────────
+            tg_token = bot_token or os.environ.get("TELEGRAM_BOT_TOKEN", "")
+            tg_chat  = chat_id   or os.environ.get("TELEGRAM_CHAT_ID", "")
+            if tg_token and tg_chat:
+                with open(png_path, "rb") as f:
+                    _req.post(
+                        f"https://api.telegram.org/bot{tg_token}/sendPhoto",
+                        data={"chat_id": tg_chat, "caption": f"Good morning! Daily report for {data['restaurant_name']}."},
+                        files={"photo": f}, timeout=15,
+                    )
+                logger.info(f"Telegram card sent to {uname}")
+
+            # ── Email ─────────────────────────────────────────────────────
+            from_addr = os.environ.get("EMAIL_FROM", "")
+            password  = os.environ.get("EMAIL_PASSWORD", "")
+            if email and from_addr and password:
+                _send_card_email(data, html, email, from_addr, password)
+                logger.info(f"Email card sent to {uname} ({email})")
+
+        except Exception as e:
+            logger.warning(f"Daily card failed for {uname}: {e}")
+
+
+def _send_card_email(data: dict, html: str, to_addr: str, from_addr: str, password: str):
+    import smtplib
+    from email.mime.application import MIMEApplication
+    from email.mime.multipart import MIMEMultipart
+    from email.mime.text import MIMEText
+    from card import render_png_async
+    import asyncio
+
+    smtp_host = os.environ.get("EMAIL_SMTP_HOST", "smtp.gmail.com")
+    smtp_port = int(os.environ.get("EMAIL_SMTP_PORT", "587"))
+
+    # Render as PDF using playwright
+    from playwright.sync_api import sync_playwright
+    pdf_path = f"/tmp/card_{data['username']}.pdf"
+    with sync_playwright() as p:
+        browser = p.chromium.launch()
+        page    = browser.new_page(viewport={"width": 780, "height": 600})
+        page.set_content(html, wait_until="domcontentloaded")
+        page.pdf(path=pdf_path, width="780px", print_background=True,
+                 margin={"top": "0", "right": "0", "bottom": "0", "left": "0"})
+        browser.close()
+
+    restaurant = data["restaurant_name"]
+    today      = data["today"]
+    today_str  = today.strftime("%B") + " " + str(today.day) + ", " + str(today.year)
+
+    msg = MIMEMultipart("mixed")
+    msg["Subject"] = f"Your Daily Report — {restaurant} — {today_str}"
+    msg["From"]    = f"TableMetrics <{from_addr}>"
+    msg["To"]      = to_addr
+    msg.attach(MIMEText(f"Good morning!\n\nYour daily report for {restaurant} is attached.\n\n— TableMetrics", "plain"))
+
+    with open(pdf_path, "rb") as f:
+        part = MIMEApplication(f.read(), _subtype="pdf")
+        part.add_header("Content-Disposition", "attachment", filename=f"daily_report_{today.isoformat()}.pdf")
+        msg.attach(part)
+
+    with smtplib.SMTP(smtp_host, smtp_port) as server:
+        server.ehlo(); server.starttls(); server.login(from_addr, password)
+        server.sendmail(from_addr, to_addr, msg.as_string())
 
 
 async def nightly_run(app: Application):
