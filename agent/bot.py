@@ -1090,6 +1090,49 @@ async def cmd_clearchat(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("💬 Conversation cleared.")
 
 
+# ── Daily card on demand ───────────────────────────────────────────────────────
+
+async def cmd_card(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """
+    Send yesterday's daily card as a PNG for a given username.
+
+    Usage:
+        /card ahsan          — generic form
+        /ahsan               — shortcut (command name IS the username)
+    """
+    import sys
+    sys.path.insert(0, str(Path(__file__).parent.parent))
+
+    # Resolve username: explicit arg takes priority, then command name itself
+    username = (ctx.args[0].strip().lower() if ctx.args else None)
+    if not username:
+        cmd_name = (update.message.text or "").split()[0].lstrip("/").split("@")[0].lower()
+        username = cmd_name if cmd_name != "card" else None
+
+    if not username:
+        await update.message.reply_text("Usage: /card <username>  e.g. /card ahsan")
+        return
+
+    status = await update.message.reply_text(f"Generating card for {username}…")
+
+    try:
+        from utils.daily_card import fetch_card_data, generate_card_html, _render_png
+        data     = fetch_card_data(username)
+        html     = generate_card_html(data)
+        png_path = f"/tmp/card_{username}.png"
+        await _render_png(html, png_path)
+        caption = (
+            f"Daily report · {data['restaurant_name']} · "
+            + data["today"].strftime("%B") + " " + str(data["today"].day)
+            + ", " + str(data["today"].year)
+        )
+        with open(png_path, "rb") as f:
+            await update.message.reply_photo(photo=f, caption=caption)
+        await status.delete()
+    except Exception as e:
+        await status.edit_text(f"Failed to generate card: {e}")
+
+
 # ── Nightly run ───────────────────────────────────────────────────────────────
 def _send_all_daily_cards():
     """Send morning card (Telegram + email) to every configured user."""
@@ -1185,6 +1228,8 @@ def main():
         ("start",     cmd_help),
         ("chatid",    cmd_chatid),
         ("clearchat", cmd_clearchat),
+        ("card",      cmd_card),
+        ("ahsan",     cmd_card),   # shortcut — add more clients here as /username
     ]:
         app.add_handler(CommandHandler(cmd, handler))
 
