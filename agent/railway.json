@@ -4,7 +4,7 @@
     "builder": "NIXPACKS"
   },
   "deploy": {
-    "startCommand": "bash -c 'python ${BOT_SCRIPT:-bot.py}'",
+    "startCommand": "bash -c 'playwright install chromium --with-deps && python ${BOT_SCRIPT:-bot.py}'",
     "restartPolicyType": "ON_FAILURE",
     "restartPolicyMaxRetries": 10
   }
