@@ -342,15 +342,13 @@ def page_header(
     if subtitle:
         st.markdown(f'<p class="report-subtitle">{subtitle}</p>', unsafe_allow_html=True)
     if start_date and end_date:
-        try:
-            s = start_date.strftime("%b %-d, %Y")
-            e = end_date.strftime("%b %-d, %Y")
-        except ValueError:
-            # Windows doesn't support %-d
-            s = start_date.strftime("%b") + " " + str(start_date.day) + ", " + str(start_date.year)
-            e = end_date.strftime("%b") + " " + str(end_date.day) + ", " + str(end_date.year)
+        from datetime import date as _date
+        def _fmt(d):
+            if isinstance(d, str):
+                d = _date.fromisoformat(d)
+            return d.strftime("%b") + " " + str(d.day) + ", " + str(d.year)
         st.markdown(
-            f'<div class="date-range-pill">📅 {s} — {e}</div>',
+            f'<div class="date-range-pill">📅 {_fmt(start_date)} — {_fmt(end_date)}</div>',
             unsafe_allow_html=True,
         )
 
