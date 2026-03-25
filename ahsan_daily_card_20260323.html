@@ -18,179 +18,62 @@
   }
 
   /* Header */
-  .header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 20px;
-  }
+  .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
   .brand {
-    font-size: 15px;
-    font-weight: 800;
-    letter-spacing: -0.3px;
+    font-size: 15px; font-weight: 800; letter-spacing: -0.3px;
     background: linear-gradient(135deg, #FF6B35, #FF4B4B);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
   }
-  .header-right {
-    font-size: 11px;
-    color: #666;
-    text-align: right;
-  }
-  .restaurant {
-    font-size: 12px;
-    color: #aaa;
-    margin-top: 1px;
-    font-weight: 600;
-  }
+  .header-right { font-size: 11px; color: #666; text-align: right; }
+  .restaurant { font-size: 12px; color: #aaa; margin-top: 1px; font-weight: 600; }
 
   /* Hero */
   .hero {
-    background: #1a1a1d;
-    border-radius: 10px;
-    padding: 20px 22px;
-    margin-bottom: 14px;
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
+    background: #1a1a1d; border-radius: 10px; padding: 20px 22px;
+    margin-bottom: 14px; display: flex; justify-content: space-between; align-items: flex-start;
   }
-  .hero-rev {
-    font-size: 38px;
-    font-weight: 800;
-    letter-spacing: -1px;
-    color: #fff;
-    line-height: 1;
-  }
-  .hero-label {
-    font-size: 11px;
-    color: #666;
-    margin-top: 4px;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-  }
-  .hero-stats {
-    display: flex;
-    gap: 24px;
-    margin-top: 4px;
-  }
-  .hero-stat {
-    text-align: right;
-  }
-  .hero-stat .val {
-    font-size: 18px;
-    font-weight: 700;
-    color: #fff;
-  }
-  .hero-stat .lbl {
-    font-size: 10px;
-    color: #666;
-    text-transform: uppercase;
-    letter-spacing: 0.8px;
-  }
+  .hero-rev { font-size: 38px; font-weight: 800; letter-spacing: -1px; color: #fff; line-height: 1; }
+  .hero-label { font-size: 11px; color: #666; margin-top: 4px; text-transform: uppercase; letter-spacing: 1px; }
+  .hero-stats { display: flex; gap: 24px; margin-top: 4px; }
+  .hero-stat { text-align: right; }
+  .hero-stat .val { font-size: 18px; font-weight: 700; color: #fff; }
+  .hero-stat .lbl { font-size: 10px; color: #666; text-transform: uppercase; letter-spacing: 0.8px; }
 
   /* Alerts */
   .alerts {
-    background: rgba(255,107,53,0.10);
-    border: 1px solid rgba(255,107,53,0.25);
-    border-radius: 8px;
-    padding: 12px 16px;
-    margin-bottom: 14px;
+    background: rgba(255,107,53,0.10); border: 1px solid rgba(255,107,53,0.25);
+    border-radius: 8px; padding: 12px 16px; margin-bottom: 14px;
   }
   .alerts-title {
-    font-size: 10px;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 1.2px;
-    color: #FF6B35;
-    margin-bottom: 6px;
+    font-size: 10px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 1.2px; color: #FF6B35; margin-bottom: 6px;
   }
-  .alert-item {
-    font-size: 12px;
-    color: #ddd;
-    padding: 3px 0;
-    line-height: 1.5;
-  }
+  .alert-item { font-size: 12px; color: #ddd; padding: 3px 0; line-height: 1.5; }
 
   /* KPI row */
-  .kpi-row {
-    display: flex;
-    gap: 10px;
-    margin-bottom: 14px;
-  }
-  .kpi {
-    flex: 1;
-    background: #1a1a1d;
-    border-radius: 8px;
-    padding: 14px 16px;
-    text-align: center;
-  }
-  .kpi .val {
-    font-size: 20px;
-    font-weight: 800;
-    color: #fff;
-  }
-  .kpi .lbl {
-    font-size: 10px;
-    color: #666;
-    text-transform: uppercase;
-    letter-spacing: 0.8px;
-    margin-top: 3px;
-  }
+  .kpi-row { display: flex; gap: 10px; margin-bottom: 14px; }
+  .kpi { flex: 1; background: #1a1a1d; border-radius: 8px; padding: 14px 16px; text-align: center; }
+  .kpi .val { font-size: 20px; font-weight: 800; color: #fff; }
+  .kpi .lbl { font-size: 10px; color: #666; text-transform: uppercase; letter-spacing: 0.8px; margin-top: 3px; }
   .kpi.warn .val { color: #e74c3c; }
   .kpi.ok   .val { color: #2ecc71; }
 
   /* Day cards */
   .days-title {
-    font-size: 10px;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 1.2px;
-    color: #555;
-    margin-bottom: 8px;
+    font-size: 10px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 1.2px; color: #555; margin-bottom: 8px;
   }
-  .days {
-    display: flex;
-    gap: 8px;
-  }
-  .day-card {
-    flex: 1;
-    background: #1a1a1d;
-    border-radius: 8px;
-    padding: 12px 10px;
-    text-align: center;
-  }
-  .day-label {
-    font-size: 10px;
-    color: #666;
-    text-transform: uppercase;
-    letter-spacing: 0.6px;
-    margin-bottom: 5px;
-  }
-  .day-rev {
-    font-size: 15px;
-    font-weight: 800;
-    color: #fff;
-    margin-bottom: 3px;
-  }
-  .day-meta {
-    font-size: 9.5px;
-    color: #555;
-    margin-bottom: 3px;
-  }
-  .day-fc {
-    font-size: 9.5px;
-    font-weight: 600;
-  }
+  .days { display: flex; gap: 8px; }
+  .day-card { flex: 1; background: #1a1a1d; border-radius: 8px; padding: 12px 10px; text-align: center; }
+  .day-label { font-size: 10px; color: #666; text-transform: uppercase; letter-spacing: 0.6px; margin-bottom: 5px; }
+  .day-rev   { font-size: 15px; font-weight: 800; color: #fff; margin-bottom: 3px; }
+  .day-meta  { font-size: 9.5px; color: #555; }
+  .day-card.today { border: 1px solid rgba(255,107,53,0.4); }
 
   /* Footer */
   .footer {
-    margin-top: 18px;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    border-top: 1px solid #1e1e22;
-    padding-top: 12px;
+    margin-top: 18px; display: flex; justify-content: space-between;
+    align-items: center; border-top: 1px solid #1e1e22; padding-top: 12px;
   }
   .footer p { font-size: 10px; color: #444; }
   .footer a { color: #FF6B35; text-decoration: none; font-size: 10px; }
@@ -211,7 +94,7 @@
     </div>
   </div>
 
-  <!-- Hero: yesterday's revenue -->
+  <!-- Hero -->
   <div class="hero">
     <div>
       <div class="hero-rev">$1,195</div>
@@ -227,7 +110,7 @@
         <div class="lbl">Avg Check</div>
       </div>
       <div class="hero-stat">
-        <div class="val">$10,039</div>
+        <div class="val">$10,038</div>
         <div class="lbl">7-Day Total</div>
       </div>
     </div>
@@ -236,25 +119,26 @@
   <!-- Alerts -->
   <div class="alerts">
     <div class="alerts-title">Today's Alerts</div>
-    <div class="alert-item">⚠ All metrics look healthy today. Keep it up!</div>
+    <div class="alert-item">⚠ Expenses at 61% of revenue this week — review your spend.</div>
+    <div class="alert-item">⚠ Avg check dropped to $25 yesterday — down from $30 recent average.</div>
   </div>
 
   <!-- KPIs -->
   <div class="kpi-row">
-    <div class="kpi ok">
-      <div class="val">0%</div>
-      <div class="lbl">Food Cost</div>
+    <div class="kpi">
+      <div class="val">—</div>
+      <div class="lbl">vs Last Week</div>
     </div>
-    <div class="kpi ok">
-      <div class="val">0%</div>
-      <div class="lbl">Labour %</div>
+    <div class="kpi warn">
+      <div class="val">61%</div>
+      <div class="lbl">Expense Ratio</div>
     </div>
     <div class="kpi">
       <div class="val">$6,153</div>
-      <div class="lbl">Expenses This Week</div>
+      <div class="lbl">Expenses 7 Days</div>
     </div>
     <div class="kpi">
-      <div class="val">$10,039</div>
+      <div class="val">$10,038</div>
       <div class="lbl">Revenue 7 Days</div>
     </div>
   </div>
@@ -262,49 +146,41 @@
   <!-- 7-day breakdown -->
   <div class="days-title">Last 7 Days</div>
   <div class="days">
-    
-        <div class="day-card">
-          <div class="day-label">03-17</div>
-          <div class="day-rev">$817</div>
-          <div class="day-meta">38 covers &nbsp;·&nbsp; $22 avg</div>
-          <div class="day-fc" style="color:#27ae60">Food cost 0%</div>
-        </div>
-        <div class="day-card">
-          <div class="day-label">03-18</div>
-          <div class="day-rev">$1,368</div>
-          <div class="day-meta">54 covers &nbsp;·&nbsp; $25 avg</div>
-          <div class="day-fc" style="color:#27ae60">Food cost 0%</div>
-        </div>
-        <div class="day-card">
-          <div class="day-label">03-19</div>
-          <div class="day-rev">$1,673</div>
-          <div class="day-meta">55 covers &nbsp;·&nbsp; $30 avg</div>
-          <div class="day-fc" style="color:#27ae60">Food cost 0%</div>
-        </div>
-        <div class="day-card">
-          <div class="day-label">03-20</div>
-          <div class="day-rev">$1,731</div>
-          <div class="day-meta">70 covers &nbsp;·&nbsp; $25 avg</div>
-          <div class="day-fc" style="color:#27ae60">Food cost 0%</div>
-        </div>
-        <div class="day-card">
-          <div class="day-label">03-21</div>
-          <div class="day-rev">$1,987</div>
-          <div class="day-meta">56 covers &nbsp;·&nbsp; $35 avg</div>
-          <div class="day-fc" style="color:#27ae60">Food cost 0%</div>
-        </div>
-        <div class="day-card">
-          <div class="day-label">03-22</div>
-          <div class="day-rev">$1,267</div>
-          <div class="day-meta">49 covers &nbsp;·&nbsp; $26 avg</div>
-          <div class="day-fc" style="color:#27ae60">Food cost 0%</div>
-        </div>
-        <div class="day-card">
-          <div class="day-label">03-23</div>
-          <div class="day-rev">$1,195</div>
-          <div class="day-meta">48 covers &nbsp;·&nbsp; $25 avg</div>
-          <div class="day-fc" style="color:#27ae60">Food cost 0%</div>
-        </div>
+    <div class="day-card">
+      <div class="day-label">Tue 17</div>
+      <div class="day-rev">$817</div>
+      <div class="day-meta">38 covers &nbsp;·&nbsp; $22 avg</div>
+    </div>
+    <div class="day-card">
+      <div class="day-label">Wed 18</div>
+      <div class="day-rev">$1,368</div>
+      <div class="day-meta">54 covers &nbsp;·&nbsp; $25 avg</div>
+    </div>
+    <div class="day-card">
+      <div class="day-label">Thu 19</div>
+      <div class="day-rev">$1,673</div>
+      <div class="day-meta">55 covers &nbsp;·&nbsp; $30 avg</div>
+    </div>
+    <div class="day-card">
+      <div class="day-label">Fri 20</div>
+      <div class="day-rev">$1,731</div>
+      <div class="day-meta">70 covers &nbsp;·&nbsp; $25 avg</div>
+    </div>
+    <div class="day-card">
+      <div class="day-label">Sat 21</div>
+      <div class="day-rev">$1,987</div>
+      <div class="day-meta">56 covers &nbsp;·&nbsp; $35 avg</div>
+    </div>
+    <div class="day-card">
+      <div class="day-label">Sun 22</div>
+      <div class="day-rev">$1,267</div>
+      <div class="day-meta">49 covers &nbsp;·&nbsp; $26 avg</div>
+    </div>
+    <div class="day-card today">
+      <div class="day-label">Mon 23</div>
+      <div class="day-rev">$1,195</div>
+      <div class="day-meta">48 covers &nbsp;·&nbsp; $25 avg</div>
+    </div>
   </div>
 
   <!-- Footer -->

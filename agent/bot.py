@@ -1092,24 +1092,34 @@ async def cmd_clearchat(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 # ── Nightly run ───────────────────────────────────────────────────────────────
 def _send_all_daily_cards():
-    """Send morning card to every user that has a telegram_chat_id configured."""
-    import sys, os as _os
+    """Send morning card (Telegram + email) to every configured user."""
+    import sys
     sys.path.insert(0, str(Path(__file__).parent.parent))
     try:
-        from utils.daily_card import send_daily_card
+        from utils.daily_card import send_daily_card, send_daily_card_email
         from data.database import get_engine
         from sqlalchemy import text as _text
         engine = get_engine()
         with engine.connect() as conn:
             rows = conn.execute(_text(
-                "SELECT username FROM users WHERE telegram_chat_id IS NOT NULL AND telegram_chat_id != ''"
+                "SELECT username, email, telegram_chat_id FROM users WHERE username IS NOT NULL"
             )).fetchall()
         for row in rows:
-            try:
-                send_daily_card(row[0])
-                logger.info(f"Daily card sent to {row[0]}")
-            except Exception as e:
-                logger.warning(f"Daily card failed for {row[0]}: {e}")
+            uname, email, tg_id = row[0], row[1], row[2]
+            # Telegram — only if chat_id is set
+            if tg_id:
+                try:
+                    send_daily_card(uname)
+                    logger.info(f"Telegram card sent to {uname}")
+                except Exception as e:
+                    logger.warning(f"Telegram card failed for {uname}: {e}")
+            # Email — only if email on file
+            if email:
+                try:
+                    send_daily_card_email(uname)
+                    logger.info(f"Email card sent to {uname} ({email})")
+                except Exception as e:
+                    logger.warning(f"Email card failed for {uname}: {e}")
     except Exception as e:
         logger.error(f"_send_all_daily_cards failed: {e}")
 

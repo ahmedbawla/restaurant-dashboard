@@ -433,7 +433,7 @@ def generate_card_html(data: dict) -> str:
 </html>"""
 
 
-# ── PNG rendering ─────────────────────────────────────────────────────────────
+# ── PNG / PDF rendering ───────────────────────────────────────────────────────
 
 async def _render_png(html: str, out_path: str) -> None:
     """Render HTML card to PNG using playwright headless Chrome."""
@@ -442,15 +442,34 @@ async def _render_png(html: str, out_path: str) -> None:
         browser = await p.chromium.launch()
         page    = await browser.new_page(viewport={"width": 780, "height": 600})
         await page.set_content(html, wait_until="domcontentloaded")
-        # Let the card dictate height
         height = await page.evaluate("document.body.scrollHeight")
         await page.set_viewport_size({"width": 780, "height": height})
         await page.screenshot(path=out_path, full_page=True)
         await browser.close()
 
 
+async def _render_pdf(html: str, out_path: str) -> None:
+    """Render HTML card to PDF using playwright headless Chrome."""
+    from playwright.async_api import async_playwright
+    async with async_playwright() as p:
+        browser = await p.chromium.launch()
+        page    = await browser.new_page(viewport={"width": 780, "height": 600})
+        await page.set_content(html, wait_until="domcontentloaded")
+        await page.pdf(
+            path=out_path,
+            width="780px",
+            print_background=True,
+            margin={"top": "0", "right": "0", "bottom": "0", "left": "0"},
+        )
+        await browser.close()
+
+
 def render_png(html: str, out_path: str) -> None:
     asyncio.run(_render_png(html, out_path))
+
+
+def render_pdf(html: str, out_path: str) -> None:
+    asyncio.run(_render_pdf(html, out_path))
 
 
 # ── Telegram delivery ─────────────────────────────────────────────────────────
@@ -501,3 +520,107 @@ def send_daily_card(username: str, out_dir: str = "/tmp") -> bool:
             timeout=15,
         )
     return resp.status_code == 200
+
+
+# ── Email delivery ─────────────────────────────────────────────────────────────
+
+def send_daily_card_email(username: str, out_dir: str = "/tmp") -> bool:
+    """
+    Full pipeline: fetch data → build HTML → render PDF → send via email.
+
+    Required env vars (set in Railway or Streamlit secrets):
+        EMAIL_FROM      — sender address  (e.g. reports@tablemetrics.io)
+        EMAIL_PASSWORD  — SMTP password / app-password
+        EMAIL_SMTP_HOST — defaults to smtp.gmail.com
+        EMAIL_SMTP_PORT — defaults to 587
+
+    The recipient is the email stored in the users table for this username.
+    Returns True on success.
+    """
+    import smtplib
+    from email.mime.application import MIMEApplication
+    from email.mime.multipart import MIMEMultipart
+    from email.mime.text import MIMEText
+
+    smtp_host = os.environ.get("EMAIL_SMTP_HOST", "smtp.gmail.com")
+    smtp_port = int(os.environ.get("EMAIL_SMTP_PORT", "587"))
+    from_addr = os.environ.get("EMAIL_FROM", "")
+    password  = os.environ.get("EMAIL_PASSWORD", "")
+
+    if not from_addr or not password:
+        print("EMAIL_FROM / EMAIL_PASSWORD not configured — skipping email send.")
+        return False
+
+    data     = fetch_card_data(username)
+    to_addr  = data.get("email")
+    if not to_addr:
+        print(f"No email on file for {username}")
+        return False
+
+    html     = generate_card_html(data)
+    pdf_path = f"{out_dir}/daily_card_{username}.pdf"
+
+    try:
+        render_pdf(html, pdf_path)
+    except Exception as e:
+        print(f"PDF render failed ({e}), skipping email send.")
+        return False
+
+    # Build the email
+    restaurant = data["restaurant_name"]
+    today_str  = data["today"].strftime("%B") + " " + str(data["today"].day) + ", " + str(data["today"].year)
+    subject    = f"Your Daily Report — {restaurant} — {today_str}"
+
+    msg = MIMEMultipart("mixed")
+    msg["Subject"] = subject
+    msg["From"]    = f"TableMetrics <{from_addr}>"
+    msg["To"]      = to_addr
+
+    # Plain-text body
+    body_text = (
+        f"Good morning!\n\n"
+        f"Your daily performance report for {restaurant} is attached.\n\n"
+        f"— TableMetrics"
+    )
+    msg.attach(MIMEText(body_text, "plain"))
+
+    # PDF attachment
+    with open(pdf_path, "rb") as f:
+        pdf_part = MIMEApplication(f.read(), _subtype="pdf")
+        pdf_part.add_header(
+            "Content-Disposition", "attachment",
+            filename=f"daily_report_{data['today'].isoformat()}.pdf",
+        )
+        msg.attach(pdf_part)
+
+    try:
+        with smtplib.SMTP(smtp_host, smtp_port) as server:
+            server.ehlo()
+            server.starttls()
+            server.login(from_addr, password)
+            server.sendmail(from_addr, to_addr, msg.as_string())
+        print(f"Email sent to {to_addr}")
+        return True
+    except Exception as e:
+        print(f"Email send failed: {e}")
+        return False
+
+
+def send_all_daily_cards(out_dir: str = "/tmp") -> None:
+    """Send morning cards (Telegram + email) to every user who has a recipient configured."""
+    from data.database import get_engine
+    engine = get_engine()
+    with engine.connect() as conn:
+        rows = conn.execute(text(
+            "SELECT username FROM users WHERE username IS NOT NULL"
+        )).fetchall()
+    for row in rows:
+        uname = row[0]
+        try:
+            send_daily_card(uname, out_dir=out_dir)
+        except Exception as e:
+            print(f"Telegram card failed for {uname}: {e}")
+        try:
+            send_daily_card_email(uname, out_dir=out_dir)
+        except Exception as e:
+            print(f"Email card failed for {uname}: {e}")
