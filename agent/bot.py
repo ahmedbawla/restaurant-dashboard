@@ -1118,10 +1118,11 @@ async def cmd_card(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         html     = generate_card_html(data)
         png_path = f"/tmp/card_{username}.png"
         await render_png_async(html, png_path)
+        from datetime import timedelta
+        yest = data["today"] - timedelta(days=1)
         caption = (
             f"Daily report · {data['restaurant_name']} · "
-            + data["today"].strftime("%B") + " " + str(data["today"].day)
-            + ", " + str(data["today"].year)
+            + yest.strftime("%B") + " " + str(yest.day) + ", " + str(yest.year)
         )
         with open(png_path, "rb") as f:
             await update.message.reply_photo(photo=f, caption=caption)
