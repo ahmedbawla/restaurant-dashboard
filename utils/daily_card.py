@@ -42,13 +42,14 @@ def fetch_card_data(username: str) -> dict:
         sales       = [r for r in all_sales if str(r["date"]) >= d7]
         prior_sales = [r for r in all_sales if str(r["date"]) <  d7]
 
-        # Yesterday's labor cost (only populated if Paychex connected)
-        yesterday = (today - timedelta(days=1)).isoformat()
+        # Labor cost over the same 7-day window as sales.
+        # Paychex pay periods don't align with single days, so we sum the
+        # whole window — whatever completed periods fall within it count.
         labor_row = conn.execute(text("""
             SELECT COALESCE(SUM(labor_cost), 0) as total_labor
             FROM daily_labor
-            WHERE username = :u AND date = :d
-        """), {"u": username, "d": yesterday}).fetchone()
+            WHERE username = :u AND date >= :d
+        """), {"u": username, "d": d7}).fetchone()
         labor_total = float(labor_row[0]) if labor_row else 0
 
         # Expenses over the same 7-day window
@@ -120,11 +121,12 @@ def _build_alerts(data: dict) -> list[str]:
             alerts.append(f"Avg check dropped to ${yest_avg:.0f} — down from ${recent_avg:.0f} recent average.")
 
     # Labour (only if Paychex data exists)
-    labor = data["labor_total"]
-    if labor > 0 and yest_rev > 0:
-        labor_pct = labor / yest_rev * 100
-        if labor_pct > 35:
-            alerts.append(f"Labour at {labor_pct:.0f}% of revenue yesterday — target under 35%.")
+    labor  = data["labor_total"]
+    wtd_rv = sum(r.get("revenue") or 0 for r in sales)
+    if labor > 0 and wtd_rv > 0:
+        labor_pct_alert = labor / wtd_rv * 100
+        if labor_pct_alert > 35:
+            alerts.append(f"Labour at {labor_pct_alert:.0f}% of revenue this week — target under 35%.")
 
     if not alerts:
         alerts.append("All metrics look healthy today. Keep it up!")
@@ -163,9 +165,9 @@ def generate_card_html(data: dict) -> str:
     exp_ratio     = data["expenses_week"] / wtd_rev * 100 if wtd_rev > 0 and data["expenses_week"] > 0 else 0
     exp_ratio_cls = "warn" if exp_ratio > 45 else ("" if exp_ratio == 0 else "ok")
 
-    # Labour (only shown if data exists)
+    # Labour % — compared against 7-day revenue so the window matches
     labor_total = data["labor_total"]
-    labor_pct   = labor_total / yest_rev * 100 if labor_total > 0 and yest_rev > 0 else 0
+    labor_pct   = labor_total / wtd_rev * 100 if labor_total > 0 and wtd_rev > 0 else 0
 
     # 7-day cards (oldest → newest)
     day_cards = list(reversed(sales[:7]))
@@ -204,7 +206,7 @@ def generate_card_html(data: dict) -> str:
         kpi_labor_html = f"""
     <div class="kpi {labor_cls}">
       <div class="val">{labor_pct:.0f}%</div>
-      <div class="lbl">Labour %</div>
+      <div class="lbl">Labour 7 Days</div>
     </div>"""
 
     exp_ratio_val = f"{exp_ratio:.0f}%" if exp_ratio > 0 else "—"
