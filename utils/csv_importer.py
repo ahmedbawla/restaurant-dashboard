@@ -427,7 +427,7 @@ def parse_paychex_pdf_journal(raw: bytes, filename: str = "") -> tuple:
     #   Old: "CHECKDATE03/13/26 18.2500 292.00 30.03 NetPay 261.97"  (date = check date)
     #   New: "PERIOD END 03/25/26 14.5000 232.00 22.85"              (date = period end date)
     RE_CHECK = re.compile(
-        r"(?:CHECKDATE|PERIOD\s+END)\s*(\d{2}/\d{2}/\d{2})\s+([\d.]+)\s+([\d,.]+)\s+([\d,.]+)",
+        r"(?:CHECKDATE|PERIOD\s*END)\s*(\d{2}/\d{2}/\d{2})\s+([\d.]+)\s+([\d,.]+)\s+([\d,.]+)",
         re.IGNORECASE,
     )
 
@@ -586,11 +586,11 @@ def parse_paychex_pdf_journal(raw: bytes, filename: str = "") -> tuple:
     }
 
     RE_PERIOD = re.compile(
-        r"Period\s*Start\s*[-–]\s*End\s*Dates?\s+(\d{2}/\d{2}/\d{2})\s*[-–]\s*(\d{2}/\d{2}/\d{2})",
+        r"PeriodStart-EndDates\s+(\d{2}/\d{2}/\d{2})-\s*(\d{2}/\d{2}/\d{2})",
         re.IGNORECASE,
     )
     RE_CHKDTS = re.compile(
-        r"Check\s*Dates?\s+(\d{2}/\d{2}/\d{2})\s*[-–]\s*(\d{2}/\d{2}/\d{2})",
+        r"CheckDates\s+(\d{2}/\d{2}/\d{2})-\s*(\d{2}/\d{2}/\d{2})",
         re.IGNORECASE,
     )
 
