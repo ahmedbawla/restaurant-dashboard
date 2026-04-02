@@ -412,19 +412,23 @@ def parse_paychex_pdf_journal(raw: bytes, filename: str = "") -> tuple:
                 lines.extend(text.splitlines())
 
     # ── Regex patterns ────────────────────────────────────────────────────────
-    # Employee name + first Hourly line: "Lastname,Firstname Hourly 16.0000 18.2500 292.00 ..."
-    # Note: Paychex PDF has no space after the comma in the name field.
+    # Employee name + first Hourly line.
+    # Supports both formats:
+    #   Old: "Lastname,Firstname Hourly 16.0000 18.2500 292.00 ..."  (no space after comma)
+    #   New: "Lastname, Firstname Hourly 16.0000 18.2500 292.00 ..."  (space after comma)
     RE_EMP = re.compile(
-        r"^([A-Z][A-Za-z'\-]+,[A-Za-z\s\.]+?)\s+Hourly\s+([\d.]+)\s+([\d.]+)\s+([\d,.]+)"
+        r"^([A-Z][A-Za-z'\-]+,\s*[A-Za-z\s\.]+?)\s+Hourly\s+([\d.]+)\s+([\d.]+)\s+([\d,.]+)"
     )
-    # Continuation Hourly line for next check of same employee: "Hourly 16.75 25.0000 418.75 ..."
+    # Continuation Hourly line for next period of same employee: "Hourly 16.75 25.0000 418.75 ..."
     RE_HOURLY = re.compile(
         r"^Hourly\s+([\d.]+)\s+([\d.]+)\s+([\d,.]+)"
     )
-    # Check summary (no space between CHECK and DATE in Paychex PDF):
-    # "CHECKDATE03/13/26 18.2500 292.00 30.03 NetPay 261.97"
+    # Period/check summary line — two formats:
+    #   Old: "CHECKDATE03/13/26 18.2500 292.00 30.03 NetPay 261.97"  (date = check date)
+    #   New: "PERIOD END 03/25/26 14.5000 232.00 22.85"              (date = period end date)
     RE_CHECK = re.compile(
-        r"CHECKDATE(\d{2}/\d{2}/\d{2})\s+([\d.]+)\s+([\d,.]+)\s+([\d,.]+)"
+        r"(?:CHECKDATE|PERIOD\s+END)\s*(\d{2}/\d{2}/\d{2})\s+([\d.]+)\s+([\d,.]+)\s+([\d,.]+)",
+        re.IGNORECASE,
     )
 
     def _f(s: str) -> float:
@@ -454,9 +458,16 @@ def parse_paychex_pdf_journal(raw: bytes, filename: str = "") -> tuple:
         if cur_name:
             m_hourly = RE_HOURLY.match(line)
             if m_hourly:
-                # Next check period for the same employee
-                cur_hours += _f(m_hourly.group(2))
-                cur_gross += _f(m_hourly.group(3))
+                # Next period for the same employee.
+                # In PERIOD END format cur_hours/cur_gross were already reset by the
+                # previous PERIOD END match, so this sets them fresh for the next period.
+                # In CHECKDATE format (no reset between periods) we still accumulate.
+                if cur_hours == 0.0 and cur_gross == 0.0:
+                    cur_hours = _f(m_hourly.group(2))
+                    cur_gross = _f(m_hourly.group(3))
+                else:
+                    cur_hours += _f(m_hourly.group(2))
+                    cur_gross += _f(m_hourly.group(3))
                 rate = _f(m_hourly.group(1))
                 if rate > cur_rate:
                     cur_rate = rate
@@ -481,9 +492,15 @@ def parse_paychex_pdf_journal(raw: bytes, filename: str = "") -> tuple:
                 total_hours = hours_check if hours_check > 0 else cur_hours
                 gross_pay   = gross_check if gross_check > 0 else cur_gross
 
-                # week_end = day before check date; week_start = 6 days before that
-                week_end_dt   = check_dt - pd.Timedelta(days=1)
-                week_start_dt = check_dt - pd.Timedelta(days=7)
+                # New format:  PERIOD END date IS the week_end; week_start = 6 days prior
+                # Old format:  CHECKDATE is the check date; week_end = check_date - 1 day
+                is_period_end = "PERIOD" in line.upper()
+                if is_period_end:
+                    week_end_dt   = check_dt
+                    week_start_dt = check_dt - pd.Timedelta(days=6)
+                else:
+                    week_end_dt   = check_dt - pd.Timedelta(days=1)
+                    week_start_dt = check_dt - pd.Timedelta(days=7)
 
                 records.append({
                     "employee_name": cur_name,
@@ -569,11 +586,11 @@ def parse_paychex_pdf_journal(raw: bytes, filename: str = "") -> tuple:
     }
 
     RE_PERIOD = re.compile(
-        r"PeriodStart-EndDates\s+(\d{2}/\d{2}/\d{2})-\s*(\d{2}/\d{2}/\d{2})",
+        r"Period\s*Start\s*[-–]\s*End\s*Dates?\s+(\d{2}/\d{2}/\d{2})\s*[-–]\s*(\d{2}/\d{2}/\d{2})",
         re.IGNORECASE,
     )
     RE_CHKDTS = re.compile(
-        r"CheckDates\s+(\d{2}/\d{2}/\d{2})-\s*(\d{2}/\d{2}/\d{2})",
+        r"Check\s*Dates?\s+(\d{2}/\d{2}/\d{2})\s*[-–]\s*(\d{2}/\d{2}/\d{2})",
         re.IGNORECASE,
     )
 
